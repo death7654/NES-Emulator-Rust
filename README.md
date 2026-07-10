@@ -1,2 +1,3 @@
-# NES-Emulator-Java
-A Nes Emulator made in Java
+# NES-Emulator-Rust
+A Nes Emulator made in Rust
+
