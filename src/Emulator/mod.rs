@@ -1,7 +1,3 @@
 mod CPU;
 
-
-pub struct Emulator
-{
-
-}
+pub struct Emulator {}
