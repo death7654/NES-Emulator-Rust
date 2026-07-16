@@ -13,12 +13,13 @@ impl CPU {
         }
     }
 
-    pub fn fetch() -> u8 {
+    pub fn fetch(&mut self) -> u8 {
+        self.tick();
         return 0;
     }
 
     pub fn tick(&mut self) {
-        self.registers.pc += 4
+        self.registers.pc += 1
     }
 
     pub fn execute(&mut self, opcode: u8) {
@@ -33,7 +34,35 @@ impl CPU {
                     0b001 => {}
                     0b010 => {}
                     0b011 => {}
-                    0b100 => {}
+                    0b100 => match aaa {
+                        0b000 => {
+                            self.bpl();
+                        }
+                        0b001 => {
+                            self.bmi();
+                        }
+                        0b010 => {
+                            self.bvc();
+                        }
+                        0b011 => {
+                            self.bvs();
+                        }
+                        0b100 => {
+                            self.bcc();
+                        }
+                        0b101 => {
+                            self.bcs();
+                        }
+                        0b110 => {
+                            self.bne();
+                        }
+                        0b111 => {
+                            self.beq();
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
                     0b101 => {}
                     0b110 => {
                         // set and clear flags group
@@ -147,18 +176,77 @@ impl CPU {
         self.registers.carry = true;
         self.tick();
     }
-
+    // set decimal flag to true
     fn sed(&mut self) {
         self.registers.decimal = true;
         self.tick();
     }
-
+    // set i flag to true
     fn sei(&mut self) {
         self.registers.interrupt_disable = true;
         self.tick();
     }
 
+    // do nothing
     fn nop(&mut self) {
         self.tick();
+    }
+
+    // branch on when there is no carry
+    fn bcc(&mut self) {
+        self.execute_branch(!self.registers.carry);
+    }
+
+    // branch when there is a carry
+    fn bcs(&mut self) {
+        self.execute_branch(self.registers.carry);
+    }
+
+    // branch when both operands are equal
+    fn beq(&mut self) {
+        self.execute_branch(self.registers.zero);
+    }
+
+    // branch when the result is negative
+    fn bmi(&mut self) {
+        self.execute_branch(self.registers.negative);
+    }
+
+    // branch when both operands are not equal
+    fn bne(&mut self) {
+        self.execute_branch(!self.registers.zero);
+    }
+
+    // branch when the result is not negative
+    fn bpl(&mut self) {
+        self.execute_branch(!self.registers.negative);
+    }
+
+    // branch when thee is no overflow
+    fn bvc(&mut self) {
+        self.execute_branch(!self.registers.overflow);
+    }
+
+    // branch when there is an overflow
+    fn bvs(&mut self) {
+        self.execute_branch(self.registers.overflow);
+    }
+
+    // execute branches
+    fn execute_branch(&mut self, should_branch: bool) {
+        let offset: i8 = self.fetch() as i8;
+
+        if should_branch {
+            self.tick();
+
+            let old_pc = self.registers.pc;
+            let new_pc = (old_pc as i32).wrapping_add(offset as i32) as u16;
+
+            self.registers.pc = new_pc;
+
+            if (old_pc & 0xFF00) != (new_pc & 0xFF00) {
+                self.tick();
+            }
+        }
     }
 }
