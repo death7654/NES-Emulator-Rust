@@ -33,14 +33,14 @@ impl Registers {
             carry: false,
         }
     }
-    pub fn get_a(self) -> u8 {
+    pub fn get_a(&self) -> u8 {
         return self.a;
     }
     pub fn set_a(&mut self, val: u8) {
         self.a = val;
     }
 
-    pub fn get_x(self) -> u8 {
+    pub fn get_x(&self) -> u8 {
         self.x
     }
 
@@ -48,7 +48,7 @@ impl Registers {
         self.x = val;
     }
 
-    pub fn get_y(self) -> u8 {
+    pub fn get_y(&self) -> u8 {
         self.y
     }
 
@@ -56,7 +56,7 @@ impl Registers {
         self.y = val;
     }
 
-    pub fn get_pc(self) -> u16 {
+    pub fn get_pc(&self) -> u16 {
         self.pc
     }
 
@@ -64,7 +64,7 @@ impl Registers {
         self.pc = val;
     }
 
-    pub fn get_sp(self) -> u16 {
+    pub fn get_sp(&self) -> u16 {
         self.sp
     }
 
@@ -72,7 +72,7 @@ impl Registers {
         self.sp = val;
     }
 
-    pub fn get_status(self) -> u8 {
+    pub fn get_status(&self) -> u8 {
         let mut ret: u8 = 0;
 
         if self.negative {
