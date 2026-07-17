@@ -1,5 +1,4 @@
 
-
 pub struct memory
 {
   ram: [u8; 2048]
@@ -30,7 +29,7 @@ impl memory
     }
   }
 
-  pub fn write(&self, address: u16, data: u8)
+  pub fn write(&mut self, address: u16, data: u8)
   {
     match address
     {
