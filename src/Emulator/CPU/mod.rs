@@ -8,27 +8,29 @@ pub struct CPU {
     cycles: u32,
 }
 
-struct AddrResult {
-    data: u8,
-    page_crossed: bool,
+pub struct AddrResult {
+    pub address: u16,
+    pub page_crossed: bool,
 }
 
 pub enum AddressingModes {
     Immediate,
-    Absolute,
-    XIndexedAbsolute,
-    YIndexedAbsolute,
     ZeroPage,
-    XIndexedZeroPage,
-    YIndexedZeroPage,
-    XIndexedZeroPageIndirect,
-    ZeroPageIndirectYPaged,
+    ZeroPageX,
+    ZeroPageY,
+    Absolute,
+    AbsoluteX,
+    AbsoluteY,
+    XIndexedZeroPageIndirect, // Also known as (Indirect, X)
+    ZeroPageIndirectYPaged,   // Also known as (Indirect), Y
+    Indirect,                 // Used exclusively by JMP
+    NoneAddressing,
 }
 
 pub enum LoadRegisters {
     A,
     X,
-    y,
+    Y,
 }
 
 impl CPU {
@@ -40,11 +42,20 @@ impl CPU {
     }
 
     pub fn fetch(&mut self, bus: &mut Bus) -> u8 {
-        let data = bus.read(self.registers.get_pc());
-
+        let data = self.read_bus(bus, self.registers.get_pc());
         self.registers.pc = self.registers.pc.wrapping_add(1);
-        self.tick();
+
         return data;
+    }
+
+    fn read_bus(&mut self, bus: &mut Bus, address: u16) -> u8 {
+        self.cycles += 1;
+        bus.read(address)
+    }
+
+    fn write_bus(&mut self, bus: &mut Bus, address: u16, data: u8) {
+        self.cycles += 1;
+        bus.write(address, data);
     }
 
     pub fn tick(&mut self) {
@@ -52,307 +63,110 @@ impl CPU {
     }
 
     pub fn execute(&mut self, opcode: u8, bus: &mut Bus) {
-        let cc = opcode & 0x03; // Lower 2 bits  (00000011)
-        let bbb = (opcode >> 2) & 0x07; // Middle 3 bits (00011100)
-        let aaa = (opcode >> 5) & 0x07; // Upper 3 bits  (11100000)
+        let cc = opcode & 0x03; // Lower 2 bits
+        let bbb = (opcode >> 2) & 0x07; // Middle 3 bits
+        let aaa = (opcode >> 5) & 0x07; // Upper 3 bits
 
-        match cc {
-            0b00 => {
-                match bbb {
-                    0b000 => match aaa {
-                        0b101 => {
-                            self.ld(AddressingModes::Immediate, LoadRegisters::y, bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    0b001 => match aaa {
-                        0b101 => {
-                            self.ld(AddressingModes::ZeroPage, LoadRegisters::y, bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    0b010 => {}
-                    0b011 => match aaa {
-                        0b101 => {
-                            self.ld(AddressingModes::Absolute, LoadRegisters::y, bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    0b100 => match aaa {
-                        0b000 => {
-                            self.bpl(bus);
-                        }
-                        0b001 => {
-                            self.bmi(bus);
-                        }
-                        0b010 => {
-                            self.bvc(bus);
-                        }
-                        0b011 => {
-                            self.bvs(bus);
-                        }
-                        0b100 => {
-                            self.bcc(bus);
-                        }
-                        0b101 => {
-                            self.bcs(bus);
-                        }
-                        0b110 => {
-                            self.bne(bus);
-                        }
-                        0b111 => {
-                            self.beq(bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    0b101 => match aaa {
-                        0b101 => {
-                            self.ld(AddressingModes::XIndexedZeroPage, LoadRegisters::y, bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    0b110 => {
-                        // set and clear flags group
-                        match aaa {
-                            0b000 => {
-                                self.clc();
-                            }
-                            0b001 => {
-                                self.sec();
-                            }
-                            0b010 => {
-                                self.cli();
-                            }
-                            0b011 => {
-                                self.sei();
-                            }
-                            0b100 => {
-                                self.nop();
-                            }
-                            0b101 => {
-                                self.clv();
-                            }
-                            0b110 => {
-                                self.cld();
-                            }
-                            0b111 => {
-                                self.sed();
-                            }
-                            _ => {
-                                println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                            }
-                        }
-                    }
-                    0b111 => match aaa {
-                        0b101 => {
-                            self.ld(AddressingModes::XIndexedAbsolute, LoadRegisters::y, bus);
-                        }
-                        _ => {
-                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                        }
-                    },
-                    _ => {
-                        println!("{bbb}{cc} not implemented (bbb)");
-                    }
-                }
-            }
-            0b01 => match bbb {
-                0b000 => match aaa {
-                    0b101 => {
-                        self.ld(
-                            AddressingModes::XIndexedZeroPageIndirect,
-                            LoadRegisters::A,
-                            bus,
-                        );
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b001 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::ZeroPage, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b010 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::Immediate, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b011 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::Absolute, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b100 => match aaa {
-                    0b101 => {
-                        self.ld(
-                            AddressingModes::ZeroPageIndirectYPaged,
-                            LoadRegisters::A,
-                            bus,
-                        );
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b101 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::XIndexedZeroPage, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b110 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::YIndexedAbsolute, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b111 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::XIndexedAbsolute, LoadRegisters::A, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                _ => {
-                    println!("{bbb}{cc} not implemented (bbb)");
-                }
-            },
-            0b10 => match bbb {
-                0b000 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::Immediate, LoadRegisters::X, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b001 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::ZeroPage, LoadRegisters::X, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b010 => {}
-                0b011 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::Absolute, LoadRegisters::X, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b100 => {}
-                0b101 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::YIndexedZeroPage, LoadRegisters::X, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                0b110 => {}
-                0b111 => match aaa {
-                    0b101 => {
-                        self.ld(AddressingModes::YIndexedAbsolute, LoadRegisters::X, bus);
-                    }
-                    _ => {
-                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
-                    }
-                },
-                _ => {
-                    println!("{bbb}{cc} not implemented (bbb)");
-                }
-            },
-            0b11 => match bbb {
-                0b000 => {}
-                0b001 => {}
-                0b010 => {}
-                0b011 => {}
-                0b100 => {}
-                0b101 => {}
-                0b110 => {}
-                0b111 => {}
-                _ => {
-                    println!("{bbb}{cc} not implemented (bbb)");
-                }
-            },
-            _ => {
-                println!("{cc} not implemented (cc)");
-            }
+        match (cc, aaa, bbb) {
+            (0b00, 0b101, 0b000) => self.ld(AddressingModes::Immediate, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::Y, bus),
+
+            (0b00, 0b000, 0b100) => self.bpl(bus),
+            (0b00, 0b001, 0b100) => self.bmi(bus),
+            (0b00, 0b010, 0b100) => self.bvc(bus),
+            (0b00, 0b011, 0b100) => self.bvs(bus),
+            (0b00, 0b100, 0b100) => self.bcc(bus),
+            (0b00, 0b101, 0b100) => self.bcs(bus),
+            (0b00, 0b110, 0b100) => self.bne(bus),
+            (0b00, 0b111, 0b100) => self.beq(bus),
+
+            (0b00, 0b000, 0b010) => self.php(bus),
+            (0b00, 0b001, 0b010) => self.plp(bus),
+            (0b00, 0b010, 0b010) => self.pha(bus),
+            (0b00, 0b011, 0b010) => self.pla(bus),
+            (0b00, 0b100, 0b010) => self.dey(),
+            (0b00, 0b101, 0b010) => self.tay(),
+            (0b00, 0b110, 0b010) => self.iny(),
+            (0b00, 0b111, 0b010) => self.inx(),
+
+            (0b00, 0b000, 0b110) => self.clc(),
+            (0b00, 0b001, 0b110) => self.sec(),
+            (0b00, 0b010, 0b110) => self.cli(),
+            (0b00, 0b011, 0b110) => self.sei(),
+            (0b00, 0b100, 0b110) => self.tya(),
+            (0b00, 0b101, 0b110) => self.clv(),
+            (0b00, 0b110, 0b110) => self.cld(),
+            (0b00, 0b111, 0b110) => self.sed(),
+
+            (0b01, 0b101, 0b000) => self.ld(
+                AddressingModes::XIndexedZeroPageIndirect,
+                LoadRegisters::A,
+                bus,
+            ),
+            (0b01, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::A, bus),
+            (0b01, 0b101, 0b010) => self.ld(AddressingModes::Immediate, LoadRegisters::A, bus),
+            (0b01, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::A, bus),
+            (0b01, 0b101, 0b100) => self.ld(
+                AddressingModes::ZeroPageIndirectYPaged,
+                LoadRegisters::A,
+                bus,
+            ),
+            (0b01, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::A, bus),
+            (0b01, 0b101, 0b110) => self.ld(AddressingModes::AbsoluteY, LoadRegisters::A, bus),
+            (0b01, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::A, bus),
+
+            (0b10, 0b101, 0b000) => self.ld(AddressingModes::Immediate, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageY, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteY, LoadRegisters::X, bus),
+
+            (0b10, 0b111, 0b010) => self.nop(),
+
+            // Catch-all fallthrough
+            _ => println!(
+                "Opcode {opcode:02X} (aaa:{aaa:03b} bbb:{bbb:03b} cc:{cc:02b}) not implemented"
+            ),
         }
     }
     // clear carry flag
     fn clc(&mut self) {
         self.registers.carry = false;
-        self.tick();
     }
 
     // clear decimal flag
     fn cld(&mut self) {
         self.registers.decimal = false;
-        self.tick();
     }
 
     // clear interrupt disable flag
     fn cli(&mut self) {
         self.registers.interrupt_disable = false;
-        self.tick();
     }
 
     // clear zero flag
     fn clv(&mut self) {
         self.registers.zero = false;
-        self.tick();
     }
 
     // set clear flag
     fn sec(&mut self) {
         self.registers.carry = true;
-        self.tick();
     }
     // set decimal flag to true
     fn sed(&mut self) {
         self.registers.decimal = true;
-        self.tick();
     }
     // set i flag to true
     fn sei(&mut self) {
         self.registers.interrupt_disable = true;
-        self.tick();
     }
 
     // do nothing
-    fn nop(&mut self) {
-        self.tick();
-    }
+    fn nop(&mut self) {}
 
     // branch on when there is no carry
     fn bcc(&mut self, bus: &mut Bus) {
@@ -399,8 +213,6 @@ impl CPU {
         let offset: i8 = self.fetch(bus) as i8;
 
         if should_branch {
-            self.tick();
-
             let old_pc = self.registers.pc;
             let new_pc = (old_pc as i32).wrapping_add(offset as i32) as u16;
 
@@ -413,119 +225,96 @@ impl CPU {
     }
 
     // load implementation
-
-    fn get_addressing_mode(
-        &mut self,
-        addressing_mode: AddressingModes,
-        bus: &mut Bus,
-    ) -> AddrResult {
-        let output: u8;
+    pub fn get_operand_address(&mut self, mode: AddressingModes, bus: &mut Bus) -> AddrResult {
         let mut page_crossed = false;
-        match addressing_mode {
+
+        let address = match mode {
             AddressingModes::Immediate => {
-                output = self.fetch(bus);
+                let addr = self.registers.pc;
+                self.registers.pc = self.registers.pc.wrapping_add(1);
+                addr
             }
+
+            AddressingModes::ZeroPage => self.fetch(bus) as u16,
+
+            AddressingModes::ZeroPageX => {
+                let base = self.fetch(bus);
+                base.wrapping_add(self.registers.get_x()) as u16
+            }
+
+            AddressingModes::ZeroPageY => {
+                let base = self.fetch(bus);
+                base.wrapping_add(self.registers.get_y()) as u16
+            }
+
             AddressingModes::Absolute => {
                 let lower = self.fetch(bus);
-                self.tick();
                 let upper = self.fetch(bus);
-                self.tick();
-
-                let address = ((upper as u16) << 8) | (lower as u16);
-                output = bus.read(address);
+                ((upper as u16) << 8) | (lower as u16)
             }
-            AddressingModes::XIndexedAbsolute => {
+
+            AddressingModes::AbsoluteX => {
                 let lower = self.fetch(bus);
-                self.tick();
                 let upper = self.fetch(bus);
-                self.tick();
+                let base = ((upper as u16) << 8) | (lower as u16);
+                let addr = base.wrapping_add(self.registers.get_x() as u16);
 
-                let x = self.registers.get_x();
-                let base_address = ((upper as u16) << 8) | (lower as u16);
-                let address = base_address.wrapping_add(x as u16);
-
-                page_crossed = (base_address & 0xFF00) != (address & 0xFF00);
-
-                output = bus.read(address);
-                self.tick();
+                page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+                addr
             }
-            AddressingModes::YIndexedAbsolute => {
+
+            AddressingModes::AbsoluteY => {
                 let lower = self.fetch(bus);
-                self.tick();
                 let upper = self.fetch(bus);
-                self.tick();
+                let base = ((upper as u16) << 8) | (lower as u16);
+                let addr = base.wrapping_add(self.registers.get_y() as u16);
 
-                let y = self.registers.get_y();
-                let base_address = (upper as u16) << 8 | (lower as u16);
-                let address = base_address.wrapping_add(y as u16);
-
-                page_crossed = (base_address & 0xFF00) != (address & 0xFF00);
-
-                output = bus.read(address);
-                self.tick();
+                page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+                addr
             }
-            AddressingModes::ZeroPage => {
-                let address = self.fetch(bus) as u16;
 
-                output = bus.read(address);
-                self.tick();
-            }
-            AddressingModes::XIndexedZeroPage => {
-                let base_address = self.fetch(bus);
-                self.tick();
-                let x = self.registers.get_x();
-                let address = base_address.wrapping_add(x) as u16;
-
-                output = bus.read(address);
-                self.tick();
-            }
-            AddressingModes::YIndexedZeroPage => {
-                let base_address = self.fetch(bus);
-                self.tick();
-                let y = self.registers.get_x();
-                let address = base_address.wrapping_add(y) as u16;
-
-                output = bus.read(address);
-                self.tick();
-            }
             AddressingModes::XIndexedZeroPageIndirect => {
-                let base_zp = self.fetch(bus);
-                self.tick();
+                let base = self.fetch(bus);
+                let ptr = base.wrapping_add(self.registers.get_x());
 
-                let x = self.registers.get_x();
-                let ptr = base_zp.wrapping_add(x);
+                let lower = self.read_bus(bus, ptr as u16);
+                let upper = self.read_bus(bus, ptr.wrapping_add(1) as u16);
 
-                let lower = bus.read(ptr as u16);
-                self.tick();
-                let upper = bus.read(ptr.wrapping_add(1) as u16);
-                self.tick();
-
-                let address = ((upper as u16) << 8) | (lower as u16);
-                output = bus.read(address);
-                self.tick();
+                ((upper as u16) << 8) | (lower as u16)
             }
+
             AddressingModes::ZeroPageIndirectYPaged => {
-                let ptr = self.fetch(bus) as u16;
+                let ptr = self.fetch(bus);
 
-                let lower = bus.read(ptr);
-                self.tick();
-                let upper = bus.read((ptr & 0x00FF) | ((ptr + 1) & 0x00FF));
-                self.tick();
+                let lower = self.read_bus(bus, ptr as u16);
+                let upper = self.read_bus(bus, ptr.wrapping_add(1) as u16);
+                let base = ((upper as u16) << 8) | (lower as u16);
 
-                let base_address = ((upper as u16) << 8) | (lower as u16);
-                let y = self.registers.get_y();
-                let address = base_address.wrapping_add(y as u16);
-
-                // Set flag if page crossed, but let the caller handle the self.tick() penalty
-                page_crossed = (base_address & 0xFF00) != (address & 0xFF00);
-
-                output = bus.read(address);
-                self.tick();
+                let addr = base.wrapping_add(self.registers.get_y() as u16);
+                page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+                addr
             }
-        }
+
+            AddressingModes::Indirect => {
+                let lower = self.fetch(bus);
+                let upper = self.fetch(bus);
+                let ptr = ((upper as u16) << 8) | (lower as u16);
+
+                let lower_target = self.read_bus(bus, ptr);
+                let upper_target = if (ptr & 0x00FF) == 0x00FF {
+                    self.read_bus(bus, ptr & 0xFF00)
+                } else {
+                    self.read_bus(bus, ptr + 1)
+                };
+
+                ((upper_target as u16) << 8) | (lower_target as u16)
+            }
+
+            AddressingModes::NoneAddressing => 0,
+        };
 
         AddrResult {
-            data: output,
+            address,
             page_crossed,
         }
     }
@@ -534,21 +323,48 @@ impl CPU {
         match register {
             LoadRegisters::A => self.registers.set_a(data),
             LoadRegisters::X => self.registers.set_x(data),
-            LoadRegisters::y => self.registers.set_y(data),
+            LoadRegisters::Y => self.registers.set_y(data),
         }
     }
 
     fn ld(&mut self, addressing_mode: AddressingModes, register: LoadRegisters, bus: &mut Bus) {
-        let result = self.get_addressing_mode(addressing_mode, bus);
+        let res = self.get_operand_address(addressing_mode, bus);
+        let data = self.read_bus(bus, res.address);
 
-        if result.page_crossed {
+        // 6502 loads get an extra cycle penalty ONLY if a page boundary is crossed
+        if res.page_crossed {
             self.tick();
         }
 
-        self.load_into_register(register, result.data);
-        self.set_zero(result.data);
-        self.set_negative(result.data);
+        self.load_into_register(register, data);
+        self.set_zero(data);
+        self.set_negative(data);
     }
+
+    // store
+    fn get_register_data(&self, register: LoadRegisters) -> u8 {
+        match register {
+            LoadRegisters::A => return self.registers.get_a(),
+            LoadRegisters::X => return self.registers.get_x(),
+            LoadRegisters::Y => return self.registers.get_y(),
+        }
+    }
+
+    fn st(&mut self, addressing_mode: AddressingModes, register: LoadRegisters, bus: &mut Bus) {
+        let data = self.get_register_data(register);
+        let address = self.get_operand_address(addressing_mode, bus);
+        self.write_bus(bus, address.address, data);
+    }
+
+    fn php(&mut self, _: &mut Bus) {}
+    fn plp(&mut self, _: &mut Bus) {}
+    fn pha(&mut self, _: &mut Bus) {}
+    fn pla(&mut self, _: &mut Bus) {}
+    fn dey(&mut self) {}
+    fn tay(&mut self) {}
+    fn iny(&mut self) {}
+    fn inx(&mut self) {}
+    fn tya(&mut self) {}
 
     // easy flag sets
     fn set_zero(&mut self, data: u8) {
