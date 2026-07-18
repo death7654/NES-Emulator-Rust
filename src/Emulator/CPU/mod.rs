@@ -20,8 +20,15 @@ pub enum AddressingModes {
     YIndexedAbsolute,
     ZeroPage,
     XIndexedZeroPage,
+    YIndexedZeroPage,
     XIndexedZeroPageIndirect,
     ZeroPageIndirectYPaged,
+}
+
+pub enum LoadRegisters {
+    A,
+    X,
+    y,
 }
 
 impl CPU {
@@ -127,7 +134,11 @@ impl CPU {
             0b01 => match bbb {
                 0b000 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::XIndexedZeroPageIndirect, bus);
+                        self.ld(
+                            AddressingModes::XIndexedZeroPageIndirect,
+                            LoadRegisters::A,
+                            bus,
+                        );
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -135,7 +146,7 @@ impl CPU {
                 },
                 0b001 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::ZeroPage, bus);
+                        self.ld(AddressingModes::ZeroPage, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -143,7 +154,7 @@ impl CPU {
                 },
                 0b010 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::Immediate, bus);
+                        self.ld(AddressingModes::Immediate, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -151,7 +162,7 @@ impl CPU {
                 },
                 0b011 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::Absolute, bus);
+                        self.ld(AddressingModes::Absolute, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -159,7 +170,11 @@ impl CPU {
                 },
                 0b100 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::ZeroPageIndirectYPaged, bus);
+                        self.ld(
+                            AddressingModes::ZeroPageIndirectYPaged,
+                            LoadRegisters::A,
+                            bus,
+                        );
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -167,7 +182,7 @@ impl CPU {
                 },
                 0b101 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::XIndexedZeroPage, bus);
+                        self.ld(AddressingModes::XIndexedZeroPage, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -175,7 +190,7 @@ impl CPU {
                 },
                 0b110 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::YIndexedAbsolute, bus);
+                        self.ld(AddressingModes::YIndexedAbsolute, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -183,7 +198,7 @@ impl CPU {
                 },
                 0b111 => match aaa {
                     0b101 => {
-                        self.lda(AddressingModes::XIndexedAbsolute, bus);
+                        self.ld(AddressingModes::XIndexedAbsolute, LoadRegisters::A, bus);
                     }
                     _ => {
                         println!("{aaa}{bbb}{cc} not implemented (aaa)");
@@ -328,9 +343,9 @@ impl CPU {
         }
     }
 
-    // LDA implementation
+    // load implementation
 
-    fn get_addressing_mode_lda(
+    fn get_addressing_mode(
         &mut self,
         addressing_mode: AddressingModes,
         bus: &mut Bus,
@@ -395,6 +410,15 @@ impl CPU {
                 output = bus.read(address);
                 self.tick();
             }
+            AddressingModes::YIndexedZeroPage => {
+                let base_address = self.fetch(bus);
+                self.tick();
+                let y = self.registers.get_x();
+                let address = base_address.wrapping_add(y) as u16;
+
+                output = bus.read(address);
+                self.tick();
+            }
             AddressingModes::XIndexedZeroPageIndirect => {
                 let base_zp = self.fetch(bus);
                 self.tick();
@@ -437,18 +461,27 @@ impl CPU {
         }
     }
 
-    fn lda(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_addressing_mode_lda(addressing_mode, bus);
+    fn load_into_register(&mut self, register: LoadRegisters, data: u8) {
+        match register {
+            LoadRegisters::A => self.registers.set_a(data),
+            LoadRegisters::X => self.registers.set_x(data),
+            LoadRegisters::y => self.registers.set_y(data),
+        }
+    }
+
+    fn ld(&mut self, addressing_mode: AddressingModes, register: LoadRegisters, bus: &mut Bus) {
+        let result = self.get_addressing_mode(addressing_mode, bus);
 
         if result.page_crossed {
             self.tick();
         }
 
-        self.registers.set_a(result.data);
+        self.load_into_register(register, result.data);
         self.set_zero(result.data);
         self.set_negative(result.data);
     }
 
+    // easy flag sets
     fn set_zero(&mut self, data: u8) {
         if data == 0 {
             self.registers.zero = true;
