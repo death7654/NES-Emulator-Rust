@@ -59,10 +59,31 @@ impl CPU {
         match cc {
             0b00 => {
                 match bbb {
-                    0b000 => {}
-                    0b001 => {}
+                    0b000 => match aaa {
+                        0b101 => {
+                            self.ld(AddressingModes::Immediate, LoadRegisters::y, bus);
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
+                    0b001 => match aaa {
+                        0b101 => {
+                            self.ld(AddressingModes::ZeroPage, LoadRegisters::y, bus);
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
                     0b010 => {}
-                    0b011 => {}
+                    0b011 => match aaa {
+                        0b101 => {
+                            self.ld(AddressingModes::Absolute, LoadRegisters::y, bus);
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
                     0b100 => match aaa {
                         0b000 => {
                             self.bpl(bus);
@@ -92,7 +113,14 @@ impl CPU {
                             println!("{aaa}{bbb}{cc} not implemented (aaa)");
                         }
                     },
-                    0b101 => {}
+                    0b101 => match aaa {
+                        0b101 => {
+                            self.ld(AddressingModes::XIndexedZeroPage, LoadRegisters::y, bus);
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
                     0b110 => {
                         // set and clear flags group
                         match aaa {
@@ -125,7 +153,14 @@ impl CPU {
                             }
                         }
                     }
-                    0b111 => {}
+                    0b111 => match aaa {
+                        0b101 => {
+                            self.ld(AddressingModes::XIndexedAbsolute, LoadRegisters::y, bus);
+                        }
+                        _ => {
+                            println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                        }
+                    },
                     _ => {
                         println!("{bbb}{cc} not implemented (bbb)");
                     }
@@ -209,14 +244,49 @@ impl CPU {
                 }
             },
             0b10 => match bbb {
-                0b000 => {}
-                0b001 => {}
+                0b000 => match aaa {
+                    0b101 => {
+                        self.ld(AddressingModes::Immediate, LoadRegisters::X, bus);
+                    }
+                    _ => {
+                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                    }
+                },
+                0b001 => match aaa {
+                    0b101 => {
+                        self.ld(AddressingModes::ZeroPage, LoadRegisters::X, bus);
+                    }
+                    _ => {
+                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                    }
+                },
                 0b010 => {}
-                0b011 => {}
+                0b011 => match aaa {
+                    0b101 => {
+                        self.ld(AddressingModes::Absolute, LoadRegisters::X, bus);
+                    }
+                    _ => {
+                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                    }
+                },
                 0b100 => {}
-                0b101 => {}
+                0b101 => match aaa {
+                    0b101 => {
+                        self.ld(AddressingModes::YIndexedZeroPage, LoadRegisters::X, bus);
+                    }
+                    _ => {
+                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                    }
+                },
                 0b110 => {}
-                0b111 => {}
+                0b111 => match aaa {
+                    0b101 => {
+                        self.ld(AddressingModes::YIndexedAbsolute, LoadRegisters::X, bus);
+                    }
+                    _ => {
+                        println!("{aaa}{bbb}{cc} not implemented (aaa)");
+                    }
+                },
                 _ => {
                     println!("{bbb}{cc} not implemented (bbb)");
                 }
@@ -239,7 +309,6 @@ impl CPU {
             }
         }
     }
-
     // clear carry flag
     fn clc(&mut self) {
         self.registers.carry = false;
