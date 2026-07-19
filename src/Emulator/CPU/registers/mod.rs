@@ -3,7 +3,7 @@ pub struct Registers {
     x: u8,
     y: u8,
     pub pc: u16,
-    pub sp: u16,
+    pub sp: u8,
 
     // statuses
     pub negative: bool,
@@ -64,11 +64,11 @@ impl Registers {
         self.pc = val;
     }
 
-    pub fn get_sp(&self) -> u16 {
+    pub fn get_sp(&self) -> u8 {
         self.sp
     }
 
-    pub fn set_sp(&mut self, val: u16) {
+    pub fn set_sp(&mut self, val: u8) {
         self.sp = val;
     }
 

@@ -410,13 +410,6 @@ impl CPU {
         self.registers.set_y(y);
         self.tick();
     }
-    fn tay(&mut self) {
-        let a = self.registers.get_a();
-        self.registers.set_y(a);
-        self.set_zero(a);
-        self.set_negative(a);
-        self.tick();
-    }
     fn iny(&mut self) {
         let y = self.registers.get_y().wrapping_add(1);
         self.set_zero(y);
@@ -429,6 +422,45 @@ impl CPU {
         self.set_zero(x);
         self.set_negative(x);
         self.registers.set_x(x);
+        self.tick();
+    }
+
+    // transfer
+
+    fn tax(&mut self) {
+        let a = self.registers.get_a();
+        self.registers.set_x(a);
+        self.set_zero(a);
+        self.set_negative(a);
+        self.tick();
+    }
+    fn tay(&mut self) {
+        let a = self.registers.get_a();
+        self.registers.set_y(a);
+        self.set_zero(a);
+        self.set_negative(a);
+        self.tick();
+    }
+    fn tsx(&mut self)
+    {
+        let sp  = self.registers.get_sp();
+        self.registers.set_x(sp);
+        self.set_negative(sp);
+        self.set_zero(sp);
+        self.tick();
+    }
+    fn txa(&mut self)
+    {
+        let x = self.registers.get_x();
+        self.registers.set_a(x);
+        self.set_zero(x);
+        self.set_negative(x);
+        self.tick();
+    }
+    fn txs(&mut self)
+    {
+        let x = self.registers.get_x();
+        self.registers.set_sp(x);
         self.tick();
     }
     fn tya(&mut self) {
