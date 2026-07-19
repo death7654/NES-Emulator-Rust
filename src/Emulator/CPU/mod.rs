@@ -149,7 +149,7 @@ impl CPU {
 
     // clear zero flag
     fn clv(&mut self) {
-        self.registers.zero = false;
+        self.registers.overflow = false;
     }
 
     // set clear flag
@@ -213,6 +213,7 @@ impl CPU {
         let offset: i8 = self.fetch(bus) as i8;
 
         if should_branch {
+            self.tick();
             let old_pc = self.registers.pc;
             let new_pc = (old_pc as i32).wrapping_add(offset as i32) as u16;
 
@@ -352,19 +353,110 @@ impl CPU {
 
     fn st(&mut self, addressing_mode: AddressingModes, register: LoadRegisters, bus: &mut Bus) {
         let data = self.get_register_data(register);
+
+        match addressing_mode {
+            AddressingModes::AbsoluteX
+            | AddressingModes::AbsoluteY
+            | AddressingModes::ZeroPageIndirectYPaged => {
+                self.tick();
+            }
+            _ => {}
+        }
+
         let address = self.get_operand_address(addressing_mode, bus);
+
         self.write_bus(bus, address.address, data);
     }
 
-    fn php(&mut self, _: &mut Bus) {}
-    fn plp(&mut self, _: &mut Bus) {}
-    fn pha(&mut self, _: &mut Bus) {}
-    fn pla(&mut self, _: &mut Bus) {}
-    fn dey(&mut self) {}
-    fn tay(&mut self) {}
-    fn iny(&mut self) {}
-    fn inx(&mut self) {}
-    fn tya(&mut self) {}
+    fn php(&mut self, bus: &mut Bus) {
+        self.tick();
+        let status = self.registers.get_status() | 0x30;
+        self.push_stack(bus, status);
+    }
+    fn plp(&mut self, bus: &mut Bus) {
+        self.tick();
+        let stack_value = self.pop_stack(bus);
+
+        self.registers.negative = (stack_value & 0x80) != 0; // Bit 7
+        self.registers.overflow = (stack_value & 0x40) != 0; // Bit 6
+
+        self.registers.decimal = (stack_value & 0x08) != 0; // Bit 3
+        self.registers.interrupt_disable = (stack_value & 0x04) != 0; // Bit 2
+        self.registers.zero = (stack_value & 0x02) != 0; // Bit 1
+        self.registers.carry = (stack_value & 0x01) != 0; // Bit 0
+
+        self.tick();
+    }
+    fn pha(&mut self, bus: &mut Bus) {
+        self.tick();
+        let a = self.registers.get_a();
+        self.push_stack(bus, a);
+    }
+    fn pla(&mut self, bus: &mut Bus) {
+        self.tick();
+        let stack_value = self.pop_stack(bus);
+
+        self.set_zero(stack_value);
+        self.set_negative(stack_value);
+
+        self.registers.set_a(stack_value);
+
+        self.tick();
+    }
+    fn dey(&mut self) {
+        let y = self.registers.get_y().wrapping_sub(1);
+        self.set_zero(y);
+        self.set_negative(y);
+        self.registers.set_y(y);
+        self.tick();
+    }
+    fn tay(&mut self) {
+        let a = self.registers.get_a();
+        self.registers.set_y(a);
+        self.set_zero(a);
+        self.set_negative(a);
+        self.tick();
+    }
+    fn iny(&mut self) {
+        let y = self.registers.get_y().wrapping_add(1);
+        self.set_zero(y);
+        self.set_negative(y);
+        self.registers.set_y(y);
+        self.tick();
+    }
+    fn inx(&mut self) {
+        let x = self.registers.get_x().wrapping_add(1);
+        self.set_zero(x);
+        self.set_negative(x);
+        self.registers.set_x(x);
+        self.tick();
+    }
+    fn tya(&mut self) {
+        let y = self.registers.get_y();
+        self.registers.set_a(y);
+        self.set_zero(y);
+        self.set_negative(y);
+        self.tick();
+    }
+
+    // stack functions
+
+    fn push_stack(&mut self, bus: &mut Bus, data: u8) {
+        let sp = self.registers.get_sp();
+        let memory_address = 0x0100 + (sp as u16);
+
+        self.write_bus(bus, memory_address, data);
+
+        self.registers.set_sp(sp.wrapping_sub(1));
+    }
+
+    fn pop_stack(&mut self, bus: &mut Bus) -> u8 {
+        let sp = self.registers.get_sp().wrapping_add(1);
+        self.registers.set_sp(sp);
+
+        let stack_address = 0x0100 + (sp as u16);
+        self.read_bus(bus, stack_address)
+    }
 
     // easy flag sets
     fn set_zero(&mut self, data: u8) {
