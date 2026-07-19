@@ -70,7 +70,7 @@ impl CPU {
         let aaa = (opcode >> 5) & 0x07;
 
         match (cc, aaa, bbb) {
-            (0b00, 0b000, 0b000) => self.brk(),
+            (0b00, 0b000, 0b000) => self.brk(bus),
             (0b00, 0b001, 0b000) => self.jsr(&AddressingModes::Absolute, bus),
             (0b00, 0b010, 0b000) => self.rti(bus),
             (0b00, 0b011, 0b000) => self.rts(bus),
