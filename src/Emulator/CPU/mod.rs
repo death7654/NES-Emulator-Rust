@@ -473,25 +473,39 @@ impl CPU {
         self.registers.set_a(or);
     }
     // inc instructions
+    fn dec(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+        let mut memory = self.get_bitwise_values(addressing_mode, result.address, bus);
+        memory = memory.wrapping_sub(1);
+        self.set_bitwise(&addressing_mode, result.address, memory, bus);
+    }
+    fn dex(&mut self) {
+        let x = self.registers.get_x().wrapping_sub(1);
+        self.set_transfer_inc(LoadRegisters::X, x);
+    }
     fn dey(&mut self) {
         let y = self.registers.get_y().wrapping_sub(1);
-        self.set_zero(y);
-        self.set_negative(y);
-        self.registers.set_y(y);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::Y, y);
     }
-    fn iny(&mut self) {
-        let y = self.registers.get_y().wrapping_add(1);
-        self.set_zero(y);
-        self.set_negative(y);
-        self.registers.set_y(y);
-        self.tick();
+    fn inc(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+        let mut memory = self.get_bitwise_values(addressing_mode, result.address, bus);
+        memory = memory.wrapping_add(1);
+        self.set_bitwise(&addressing_mode, result.address, memory, bus);
     }
     fn inx(&mut self) {
         let x = self.registers.get_x().wrapping_add(1);
-        self.set_zero(x);
-        self.set_negative(x);
-        self.registers.set_x(x);
+        self.set_transfer_inc(LoadRegisters::X, x);
+    }
+    fn iny(&mut self) {
+        let y = self.registers.get_y().wrapping_add(1);
+        self.set_transfer_inc(LoadRegisters::Y, y);
+    }
+
+    fn set_transfer_inc(&mut self, register: LoadRegisters, value: u8) {
+        self.set_zero(value);
+        self.set_negative(value);
+        self.load_into_register(register, value);
         self.tick();
     }
 
@@ -499,31 +513,19 @@ impl CPU {
 
     fn tax(&mut self) {
         let a = self.registers.get_a();
-        self.registers.set_x(a);
-        self.set_zero(a);
-        self.set_negative(a);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::X, a);
     }
     fn tay(&mut self) {
         let a = self.registers.get_a();
-        self.registers.set_y(a);
-        self.set_zero(a);
-        self.set_negative(a);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::Y, a);
     }
     fn tsx(&mut self) {
         let sp = self.registers.get_sp();
-        self.registers.set_x(sp);
-        self.set_negative(sp);
-        self.set_zero(sp);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::X, sp);
     }
     fn txa(&mut self) {
         let x = self.registers.get_x();
-        self.registers.set_a(x);
-        self.set_zero(x);
-        self.set_negative(x);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::A, x);
     }
     fn txs(&mut self) {
         let x = self.registers.get_x();
@@ -532,10 +534,7 @@ impl CPU {
     }
     fn tya(&mut self) {
         let y = self.registers.get_y();
-        self.registers.set_a(y);
-        self.set_zero(y);
-        self.set_negative(y);
-        self.tick();
+        self.set_transfer_inc(LoadRegisters::A, y);
     }
 
     // stack functions
@@ -742,6 +741,9 @@ impl CPU {
             }
         }
     }
+
+    // control instructions
+    
 
     // easy flag sets
     fn set_zero(&mut self, data: u8) {
