@@ -23,7 +23,7 @@ pub enum AddressingModes {
     AbsoluteY,
     XIndexedZeroPageIndirect, // Also known as (Indirect, X)
     ZeroPageIndirectYPaged,   // Also known as (Indirect), Y
-    Indirect,                 // Used exclusively by
+    Indirect,                 // Used exclusively by jmp
     Accumulator,
     NoneAddressing,
 }
@@ -379,13 +379,7 @@ impl CPU {
         self.tick();
         let stack_value = self.pop_stack(bus);
 
-        self.registers.negative = (stack_value & 0x80) != 0;
-        self.registers.overflow = (stack_value & 0x40) != 0;
-
-        self.registers.decimal = (stack_value & 0x08) != 0;
-        self.registers.interrupt_disable = (stack_value & 0x04) != 0;
-        self.registers.zero = (stack_value & 0x02) != 0;
-        self.registers.carry = (stack_value & 0x01) != 0;
+        self.restore_status(stack_value);
 
         self.tick();
     }
@@ -743,7 +737,66 @@ impl CPU {
     }
 
     // control instructions
-    
+    fn brk(&mut self)
+    {
+        self.registers.interrupt_disable = true;
+    }
+
+    fn jmp(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus)
+    {
+        let result = self.get_operand_address(addressing_mode, bus);
+        self.registers.set_pc(result.address);
+    }
+
+    fn jsr(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus)
+    {
+        let result = self.get_operand_address(addressing_mode, bus);
+        let pc = self.registers.get_pc().wrapping_sub(1);
+        let upper = (pc >> 8) as u8;
+        let lower = pc as u8;
+
+        self.tick();
+
+        self.push_stack(bus, upper);
+        self.push_stack(bus, lower);
+
+        self.registers.set_pc(result.address);
+    }
+
+    fn rti(&mut self, bus: &mut Bus)
+    {
+        let status = self.pop_stack(bus);
+
+        let lower = self.pop_stack(bus);
+        let upper = self.pop_stack(bus);
+
+        let new_pc = ((upper as u16) << 8) | (lower as u16);
+        self.restore_status(status);
+        self.registers.set_pc(new_pc);
+    }
+
+    fn rts(&mut self, bus: &mut Bus)
+    {
+        let lower = self.pop_stack(bus);
+        let upper = self.pop_stack(bus);
+
+        let pulled_pc = ((upper as u16) << 8) | (lower as u16);
+        let new_pc = pulled_pc.wrapping_add(1);
+        self.registers.set_pc(new_pc);
+    }
+
+    fn restore_status(&mut self, value: u8)
+    {
+        self.registers.negative = (value & 0x80) != 0;
+        self.registers.overflow = (value & 0x40) != 0;
+
+        self.registers.decimal = (value & 0x08) != 0;
+        self.registers.interrupt_disable = (value & 0x04) != 0;
+        self.registers.zero = (value & 0x02) != 0;
+        self.registers.carry = (value & 0x01) != 0;
+
+    }
+
 
     // easy flag sets
     fn set_zero(&mut self, data: u8) {
