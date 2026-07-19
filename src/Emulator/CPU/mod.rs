@@ -441,24 +441,21 @@ impl CPU {
         self.set_negative(a);
         self.tick();
     }
-    fn tsx(&mut self)
-    {
-        let sp  = self.registers.get_sp();
+    fn tsx(&mut self) {
+        let sp = self.registers.get_sp();
         self.registers.set_x(sp);
         self.set_negative(sp);
         self.set_zero(sp);
         self.tick();
     }
-    fn txa(&mut self)
-    {
+    fn txa(&mut self) {
         let x = self.registers.get_x();
         self.registers.set_a(x);
         self.set_zero(x);
         self.set_negative(x);
         self.tick();
     }
-    fn txs(&mut self)
-    {
+    fn txs(&mut self) {
         let x = self.registers.get_x();
         self.registers.set_sp(x);
         self.tick();
@@ -488,6 +485,104 @@ impl CPU {
 
         let stack_address = 0x0100 + (sp as u16);
         self.read_bus(bus, stack_address)
+    }
+
+    // ALU operations
+
+    fn sbc(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+        let old_a = self.registers.get_a();
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let memory_value = self.read_bus(bus, result.address);
+
+        let value_to_add = memory_value ^ 0xFF;
+        let carry_in = if self.registers.carry { 1 } else { 0 };
+
+        let result_16 = (old_a as u16) + (value_to_add as u16) + carry_in;
+        let new_a = result_16 as u8;
+
+        self.registers.carry = result_16 > 0xFF;
+
+        self.registers.overflow = ((old_a ^ new_a) & (value_to_add ^ new_a) & 0x80) != 0;
+
+        self.set_zero(new_a);
+        self.set_negative(new_a);
+
+        self.registers.set_a(new_a);
+    }
+
+    fn adc(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+        let old_a = self.registers.get_a();
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let memory_value = self.read_bus(bus, result.address);
+
+        let value_to_add = memory_value;
+        let carry_in = if self.registers.carry { 1 } else { 0 };
+
+        let result_16 = (old_a as u16) + (value_to_add as u16) + carry_in;
+        let new_a = result_16 as u8;
+
+        self.registers.carry = result_16 > 0xFF;
+
+        self.registers.overflow = ((old_a ^ new_a) & (value_to_add ^ new_a) & 0x80) != 0;
+
+        self.set_zero(new_a);
+        self.set_negative(new_a);
+
+        self.registers.set_a(new_a);
+    }
+
+    fn execute_compare(&mut self, register_value: u8, memory_value: u8) {
+        let difference = register_value.wrapping_sub(memory_value);
+
+        self.set_zero(difference);
+        self.set_negative(difference);
+
+        self.registers.carry = register_value >= memory_value;
+    }
+
+    fn cmp(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let memory = self.read_bus(bus, result.address);
+        let a = self.registers.get_a();
+        self.execute_compare(a, memory);
+    }
+    fn cpx(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let memory = self.read_bus(bus, result.address);
+        let x = self.registers.get_x();
+        self.execute_compare(x, memory);
+    }
+
+    fn cpy(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let memory = self.read_bus(bus, result.address);
+        let y = self.registers.get_y();
+        self.execute_compare(y, memory);
     }
 
     // easy flag sets
