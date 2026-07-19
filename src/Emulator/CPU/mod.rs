@@ -23,7 +23,8 @@ pub enum AddressingModes {
     AbsoluteY,
     XIndexedZeroPageIndirect, // Also known as (Indirect, X)
     ZeroPageIndirectYPaged,   // Also known as (Indirect), Y
-    Indirect,                 // Used exclusively by JMP
+    Indirect,                 // Used exclusively by
+    Accumulator,
     NoneAddressing,
 }
 
@@ -226,10 +227,11 @@ impl CPU {
     }
 
     // load implementation
-    pub fn get_operand_address(&mut self, mode: AddressingModes, bus: &mut Bus) -> AddrResult {
+    pub fn get_operand_address(&mut self, mode: &AddressingModes, bus: &mut Bus) -> AddrResult {
         let mut page_crossed = false;
 
         let address = match mode {
+            AddressingModes::Accumulator => 0,
             AddressingModes::Immediate => {
                 let addr = self.registers.pc;
                 self.registers.pc = self.registers.pc.wrapping_add(1);
@@ -329,7 +331,7 @@ impl CPU {
     }
 
     fn ld(&mut self, addressing_mode: AddressingModes, register: LoadRegisters, bus: &mut Bus) {
-        let res = self.get_operand_address(addressing_mode, bus);
+        let res = self.get_operand_address(&addressing_mode, bus);
         let data = self.read_bus(bus, res.address);
 
         // 6502 loads get an extra cycle penalty ONLY if a page boundary is crossed
@@ -363,7 +365,7 @@ impl CPU {
             _ => {}
         }
 
-        let address = self.get_operand_address(addressing_mode, bus);
+        let address = self.get_operand_address(&addressing_mode, bus);
 
         self.write_bus(bus, address.address, data);
     }
@@ -490,7 +492,7 @@ impl CPU {
     // ALU operations
 
     fn sbc(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_operand_address(addressing_mode, bus);
+        let result = self.get_operand_address(&addressing_mode, bus);
         let old_a = self.registers.get_a();
 
         if result.page_crossed {
@@ -516,7 +518,7 @@ impl CPU {
     }
 
     fn adc(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_operand_address(addressing_mode, bus);
+        let result = self.get_operand_address(&addressing_mode, bus);
         let old_a = self.registers.get_a();
 
         if result.page_crossed {
@@ -551,7 +553,7 @@ impl CPU {
     }
 
     fn cmp(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_operand_address(addressing_mode, bus);
+        let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
             self.tick();
@@ -562,7 +564,7 @@ impl CPU {
         self.execute_compare(a, memory);
     }
     fn cpx(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_operand_address(addressing_mode, bus);
+        let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
             self.tick();
@@ -574,7 +576,7 @@ impl CPU {
     }
 
     fn cpy(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
-        let result = self.get_operand_address(addressing_mode, bus);
+        let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
             self.tick();
@@ -583,6 +585,94 @@ impl CPU {
         let memory = self.read_bus(bus, result.address);
         let y = self.registers.get_y();
         self.execute_compare(y, memory);
+    }
+
+    // shift instructions
+
+    fn asl(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(&addressing_mode, bus);
+
+        let mut value = self.get_bitwise_values(&addressing_mode, result.address, bus);
+
+        self.registers.carry = (value & 0x80) != 0;
+        value <<= 1;
+
+        self.set_bitwise(&addressing_mode, result.address, value, bus);
+    }
+
+    fn lsr(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(&addressing_mode, bus);
+
+        let mut value = self.get_bitwise_values(&addressing_mode, result.address, bus);
+
+        self.registers.carry = (value & 0x01) != 0;
+        value >>= 1;
+
+        self.set_bitwise(&addressing_mode, result.address, value, bus);
+    }
+
+    fn rol(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(&addressing_mode, bus);
+
+        let mut value = self.get_bitwise_values(&addressing_mode, result.address, bus);
+
+        let old_carry = if self.registers.carry { 1 } else { 0 };
+
+        self.registers.carry = (value & 0x80) != 0;
+        value <<= 1;
+        value |= old_carry;
+
+        self.set_bitwise(&addressing_mode, result.address, value, bus);
+    }
+
+    fn ror(&mut self, addressing_mode: AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(&addressing_mode, bus);
+
+        let mut value = self.get_bitwise_values(&addressing_mode, result.address, bus);
+
+        let old_carry = if self.registers.carry { 1 } else { 0 };
+
+        self.registers.carry = (value & 0x01) != 0;
+        value >>= 1;
+        value |= (old_carry << 7);
+
+        self.set_bitwise(&addressing_mode, result.address, value, bus);
+    }
+
+    fn get_bitwise_values(
+        &mut self,
+        addressing_mode: &AddressingModes,
+        address: u16,
+        bus: &mut Bus,
+    ) -> u8 {
+        match addressing_mode {
+            AddressingModes::Accumulator => self.registers.get_a(),
+            _ => {
+                let val = self.read_bus(bus, address);
+                self.tick();
+                val
+            }
+        }
+    }
+
+    fn set_bitwise(
+        &mut self,
+        addressing_mode: &AddressingModes,
+        address: u16,
+        value: u8,
+        bus: &mut Bus,
+    ) {
+        self.set_zero(value);
+        self.set_negative(value);
+        match addressing_mode {
+            AddressingModes::Accumulator => {
+                self.registers.set_a(value);
+                self.tick();
+            }
+            _ => {
+                self.write_bus(bus, address, value);
+            }
+        }
     }
 
     // easy flag sets
