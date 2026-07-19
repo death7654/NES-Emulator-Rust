@@ -1,6 +1,6 @@
 use std::ptr::read;
 
-use crate::Emulator::{CPU::AddressingModes::ZeroPage, bus::Bus};
+use crate::Emulator::{CPU::AddressingModes::ZeroPage, bus::Bus, memory::memory};
 
 mod registers;
 pub struct CPU {
@@ -379,13 +379,13 @@ impl CPU {
         self.tick();
         let stack_value = self.pop_stack(bus);
 
-        self.registers.negative = (stack_value & 0x80) != 0; // Bit 7
-        self.registers.overflow = (stack_value & 0x40) != 0; // Bit 6
+        self.registers.negative = (stack_value & 0x80) != 0;
+        self.registers.overflow = (stack_value & 0x40) != 0;
 
-        self.registers.decimal = (stack_value & 0x08) != 0; // Bit 3
-        self.registers.interrupt_disable = (stack_value & 0x04) != 0; // Bit 2
-        self.registers.zero = (stack_value & 0x02) != 0; // Bit 1
-        self.registers.carry = (stack_value & 0x01) != 0; // Bit 0
+        self.registers.decimal = (stack_value & 0x08) != 0;
+        self.registers.interrupt_disable = (stack_value & 0x04) != 0;
+        self.registers.zero = (stack_value & 0x02) != 0;
+        self.registers.carry = (stack_value & 0x01) != 0;
 
         self.tick();
     }
@@ -405,6 +405,74 @@ impl CPU {
 
         self.tick();
     }
+
+    // logic instructions
+    fn and(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let mut a = self.registers.get_a();
+        let memory = self.read_bus(bus, result.address);
+
+        a = a & memory;
+
+        self.set_zero(a);
+        self.set_negative(a);
+        self.registers.set_a(a);
+    }
+
+    fn bit(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        let a = self.registers.get_a();
+        let memory = self.read_bus(bus, result.address);
+
+        let and_result = a & memory;
+
+        self.set_negative(memory);
+        self.registers.overflow = (memory & 0x40) != 0;
+        self.set_zero(and_result);
+    }
+
+    fn eor(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let a = self.registers.get_a();
+        let memory = self.read_bus(bus, result.address);
+
+        let xor = a ^ memory;
+
+        self.set_negative(xor);
+        self.set_zero(xor);
+
+        self.registers.set_a(xor);
+    }
+
+    fn ora(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
+        let result = self.get_operand_address(addressing_mode, bus);
+
+        if result.page_crossed {
+            self.tick();
+        }
+
+        let a = self.registers.get_a();
+        let memory = self.read_bus(bus, result.address);
+
+        let or = a | memory;
+
+        self.set_negative(or);
+        self.set_zero(or);
+
+        self.registers.set_a(or);
+    }
+    // inc instructions
     fn dey(&mut self) {
         let y = self.registers.get_y().wrapping_sub(1);
         self.set_zero(y);
