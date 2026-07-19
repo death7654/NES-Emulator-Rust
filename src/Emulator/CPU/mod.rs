@@ -23,8 +23,9 @@ pub enum AddressingModes {
     AbsoluteY,
     XIndexedZeroPageIndirect, // Also known as (Indirect, X)
     ZeroPageIndirectYPaged,   // Also known as (Indirect), Y
-    Indirect,                 // Used exclusively by jmp
+    Indirect,                 // Used exclusively by jump
     Accumulator,
+    Relative, // Used exclusively by branch
     NoneAddressing,
 }
 
@@ -64,25 +65,24 @@ impl CPU {
     }
 
     pub fn execute(&mut self, opcode: u8, bus: &mut Bus) {
-        let cc = opcode & 0x03; // Lower 2 bits
-        let bbb = (opcode >> 2) & 0x07; // Middle 3 bits
-        let aaa = (opcode >> 5) & 0x07; // Upper 3 bits
+        let cc = opcode & 0x03;
+        let bbb = (opcode >> 2) & 0x07;
+        let aaa = (opcode >> 5) & 0x07;
 
         match (cc, aaa, bbb) {
+            (0b00, 0b000, 0b000) => self.brk(),
+            (0b00, 0b001, 0b000) => self.jsr(&AddressingModes::Absolute, bus),
+            (0b00, 0b010, 0b000) => self.rti(bus),
+            (0b00, 0b011, 0b000) => self.rts(bus),
             (0b00, 0b101, 0b000) => self.ld(AddressingModes::Immediate, LoadRegisters::Y, bus),
-            (0b00, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::Y, bus),
-            (0b00, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::Y, bus),
-            (0b00, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
-            (0b00, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::Y, bus),
+            (0b00, 0b110, 0b000) => self.cpy(AddressingModes::Immediate, bus),
+            (0b00, 0b111, 0b000) => self.cpx(AddressingModes::Immediate, bus),
 
-            (0b00, 0b000, 0b100) => self.bpl(bus),
-            (0b00, 0b001, 0b100) => self.bmi(bus),
-            (0b00, 0b010, 0b100) => self.bvc(bus),
-            (0b00, 0b011, 0b100) => self.bvs(bus),
-            (0b00, 0b100, 0b100) => self.bcc(bus),
-            (0b00, 0b101, 0b100) => self.bcs(bus),
-            (0b00, 0b110, 0b100) => self.bne(bus),
-            (0b00, 0b111, 0b100) => self.beq(bus),
+            (0b00, 0b001, 0b001) => self.bit(&AddressingModes::ZeroPage, bus),
+            (0b00, 0b100, 0b001) => self.st(AddressingModes::ZeroPage, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::Y, bus),
+            (0b00, 0b110, 0b001) => self.cpy(AddressingModes::ZeroPage, bus),
+            (0b00, 0b111, 0b001) => self.cpx(AddressingModes::ZeroPage, bus),
 
             (0b00, 0b000, 0b010) => self.php(bus),
             (0b00, 0b001, 0b010) => self.plp(bus),
@@ -93,6 +93,26 @@ impl CPU {
             (0b00, 0b110, 0b010) => self.iny(),
             (0b00, 0b111, 0b010) => self.inx(),
 
+            (0b00, 0b001, 0b011) => self.bit(&AddressingModes::Absolute, bus),
+            (0b00, 0b010, 0b011) => self.jmp(&AddressingModes::Absolute, bus),
+            (0b00, 0b011, 0b011) => self.jmp(&AddressingModes::Indirect, bus),
+            (0b00, 0b100, 0b011) => self.st(AddressingModes::Absolute, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::Y, bus),
+            (0b00, 0b110, 0b011) => self.cpy(AddressingModes::Absolute, bus),
+            (0b00, 0b111, 0b011) => self.cpx(AddressingModes::Absolute, bus),
+
+            (0b00, 0b000, 0b100) => self.bpl(bus),
+            (0b00, 0b001, 0b100) => self.bmi(bus),
+            (0b00, 0b010, 0b100) => self.bvc(bus),
+            (0b00, 0b011, 0b100) => self.bvs(bus),
+            (0b00, 0b100, 0b100) => self.bcc(bus),
+            (0b00, 0b101, 0b100) => self.bcs(bus),
+            (0b00, 0b110, 0b100) => self.bne(bus),
+            (0b00, 0b111, 0b100) => self.beq(bus),
+
+            (0b00, 0b100, 0b101) => self.st(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
+            (0b00, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
+
             (0b00, 0b000, 0b110) => self.clc(),
             (0b00, 0b001, 0b110) => self.sec(),
             (0b00, 0b010, 0b110) => self.cli(),
@@ -102,32 +122,144 @@ impl CPU {
             (0b00, 0b110, 0b110) => self.cld(),
             (0b00, 0b111, 0b110) => self.sed(),
 
+            (0b00, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::Y, bus),
+
+            (0b01, 0b000, 0b000) => self.ora(&AddressingModes::XIndexedZeroPageIndirect, bus),
+            (0b01, 0b001, 0b000) => self.and(&AddressingModes::XIndexedZeroPageIndirect, bus),
+            (0b01, 0b010, 0b000) => self.eor(&AddressingModes::XIndexedZeroPageIndirect, bus),
+            (0b01, 0b011, 0b000) => self.adc(AddressingModes::XIndexedZeroPageIndirect, bus),
+            (0b01, 0b100, 0b000) => self.st(
+                AddressingModes::XIndexedZeroPageIndirect,
+                LoadRegisters::A,
+                bus,
+            ),
             (0b01, 0b101, 0b000) => self.ld(
                 AddressingModes::XIndexedZeroPageIndirect,
                 LoadRegisters::A,
                 bus,
             ),
+            (0b01, 0b110, 0b000) => self.cmp(AddressingModes::XIndexedZeroPageIndirect, bus),
+            (0b01, 0b111, 0b000) => self.sbc(AddressingModes::XIndexedZeroPageIndirect, bus),
+
+            (0b01, 0b000, 0b001) => self.ora(&AddressingModes::ZeroPage, bus),
+            (0b01, 0b001, 0b001) => self.and(&AddressingModes::ZeroPage, bus),
+            (0b01, 0b010, 0b001) => self.eor(&AddressingModes::ZeroPage, bus),
+            (0b01, 0b011, 0b001) => self.adc(AddressingModes::ZeroPage, bus),
+            (0b01, 0b100, 0b001) => self.st(AddressingModes::ZeroPage, LoadRegisters::A, bus),
             (0b01, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b001) => self.cmp(AddressingModes::ZeroPage, bus),
+            (0b01, 0b111, 0b001) => self.sbc(AddressingModes::ZeroPage, bus),
+
+            (0b01, 0b000, 0b010) => self.ora(&AddressingModes::Immediate, bus),
+            (0b01, 0b001, 0b010) => self.and(&AddressingModes::Immediate, bus),
+            (0b01, 0b010, 0b010) => self.eor(&AddressingModes::Immediate, bus),
+            (0b01, 0b011, 0b010) => self.adc(AddressingModes::Immediate, bus),
             (0b01, 0b101, 0b010) => self.ld(AddressingModes::Immediate, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b010) => self.cmp(AddressingModes::Immediate, bus),
+            (0b01, 0b111, 0b010) => self.sbc(AddressingModes::Immediate, bus),
+
+            (0b01, 0b000, 0b011) => self.ora(&AddressingModes::Absolute, bus),
+            (0b01, 0b001, 0b011) => self.and(&AddressingModes::Absolute, bus),
+            (0b01, 0b010, 0b011) => self.eor(&AddressingModes::Absolute, bus),
+            (0b01, 0b011, 0b011) => self.adc(AddressingModes::Absolute, bus),
+            (0b01, 0b100, 0b011) => self.st(AddressingModes::Absolute, LoadRegisters::A, bus),
             (0b01, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b011) => self.cmp(AddressingModes::Absolute, bus),
+            (0b01, 0b111, 0b011) => self.sbc(AddressingModes::Absolute, bus),
+
+            (0b01, 0b000, 0b100) => self.ora(&AddressingModes::ZeroPageIndirectYPaged, bus),
+            (0b01, 0b001, 0b100) => self.and(&AddressingModes::ZeroPageIndirectYPaged, bus),
+            (0b01, 0b010, 0b100) => self.eor(&AddressingModes::ZeroPageIndirectYPaged, bus),
+            (0b01, 0b011, 0b100) => self.adc(AddressingModes::ZeroPageIndirectYPaged, bus),
+            (0b01, 0b100, 0b100) => self.st(
+                AddressingModes::ZeroPageIndirectYPaged,
+                LoadRegisters::A,
+                bus,
+            ),
             (0b01, 0b101, 0b100) => self.ld(
                 AddressingModes::ZeroPageIndirectYPaged,
                 LoadRegisters::A,
                 bus,
             ),
+            (0b01, 0b110, 0b100) => self.cmp(AddressingModes::ZeroPageIndirectYPaged, bus),
+            (0b01, 0b111, 0b100) => self.sbc(AddressingModes::ZeroPageIndirectYPaged, bus),
+
+            (0b01, 0b000, 0b101) => self.ora(&AddressingModes::ZeroPageX, bus),
+            (0b01, 0b001, 0b101) => self.and(&AddressingModes::ZeroPageX, bus),
+            (0b01, 0b010, 0b101) => self.eor(&AddressingModes::ZeroPageX, bus),
+            (0b01, 0b011, 0b101) => self.adc(AddressingModes::ZeroPageX, bus),
+            (0b01, 0b100, 0b101) => self.st(AddressingModes::ZeroPageX, LoadRegisters::A, bus),
             (0b01, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b101) => self.cmp(AddressingModes::ZeroPageX, bus),
+            (0b01, 0b111, 0b101) => self.sbc(AddressingModes::ZeroPageX, bus),
+
+            (0b01, 0b000, 0b110) => self.ora(&AddressingModes::AbsoluteY, bus),
+            (0b01, 0b001, 0b110) => self.and(&AddressingModes::AbsoluteY, bus),
+            (0b01, 0b010, 0b110) => self.eor(&AddressingModes::AbsoluteY, bus),
+            (0b01, 0b011, 0b110) => self.adc(AddressingModes::AbsoluteY, bus),
+            (0b01, 0b100, 0b110) => self.st(AddressingModes::AbsoluteY, LoadRegisters::A, bus),
             (0b01, 0b101, 0b110) => self.ld(AddressingModes::AbsoluteY, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b110) => self.cmp(AddressingModes::AbsoluteY, bus),
+            (0b01, 0b111, 0b110) => self.sbc(AddressingModes::AbsoluteY, bus),
+
+            (0b01, 0b000, 0b111) => self.ora(&AddressingModes::AbsoluteX, bus),
+            (0b01, 0b001, 0b111) => self.and(&AddressingModes::AbsoluteX, bus),
+            (0b01, 0b010, 0b111) => self.eor(&AddressingModes::AbsoluteX, bus),
+            (0b01, 0b011, 0b111) => self.adc(AddressingModes::AbsoluteX, bus),
+            (0b01, 0b100, 0b111) => self.st(AddressingModes::AbsoluteX, LoadRegisters::A, bus),
             (0b01, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::A, bus),
+            (0b01, 0b110, 0b111) => self.cmp(AddressingModes::AbsoluteX, bus),
+            (0b01, 0b111, 0b111) => self.sbc(AddressingModes::AbsoluteX, bus),
 
             (0b10, 0b101, 0b000) => self.ld(AddressingModes::Immediate, LoadRegisters::X, bus),
-            (0b10, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::X, bus),
-            (0b10, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::X, bus),
-            (0b10, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageY, LoadRegisters::X, bus),
-            (0b10, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteY, LoadRegisters::X, bus),
 
+            (0b10, 0b000, 0b001) => self.asl(AddressingModes::ZeroPage, bus),
+            (0b10, 0b001, 0b001) => self.rol(AddressingModes::ZeroPage, bus),
+            (0b10, 0b010, 0b001) => self.lsr(AddressingModes::ZeroPage, bus),
+            (0b10, 0b011, 0b001) => self.ror(AddressingModes::ZeroPage, bus),
+            (0b10, 0b100, 0b001) => self.st(AddressingModes::ZeroPage, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b001) => self.ld(AddressingModes::ZeroPage, LoadRegisters::X, bus),
+            (0b10, 0b110, 0b001) => self.dec(&AddressingModes::ZeroPage, bus),
+            (0b10, 0b111, 0b001) => self.inc(&AddressingModes::ZeroPage, bus),
+
+            (0b10, 0b000, 0b010) => self.asl(AddressingModes::Accumulator, bus),
+            (0b10, 0b001, 0b010) => self.rol(AddressingModes::Accumulator, bus),
+            (0b10, 0b010, 0b010) => self.lsr(AddressingModes::Accumulator, bus),
+            (0b10, 0b011, 0b010) => self.ror(AddressingModes::Accumulator, bus),
+            (0b10, 0b100, 0b010) => self.txa(),
+            (0b10, 0b101, 0b010) => self.tax(),
+            (0b10, 0b110, 0b010) => self.dex(),
             (0b10, 0b111, 0b010) => self.nop(),
 
-            // Catch-all fallthrough
+            (0b10, 0b000, 0b011) => self.asl(AddressingModes::Absolute, bus),
+            (0b10, 0b001, 0b011) => self.rol(AddressingModes::Absolute, bus),
+            (0b10, 0b010, 0b011) => self.lsr(AddressingModes::Absolute, bus),
+            (0b10, 0b011, 0b011) => self.ror(AddressingModes::Absolute, bus),
+            (0b10, 0b100, 0b011) => self.st(AddressingModes::Absolute, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b011) => self.ld(AddressingModes::Absolute, LoadRegisters::X, bus),
+            (0b10, 0b110, 0b011) => self.dec(&AddressingModes::Absolute, bus),
+            (0b10, 0b111, 0b011) => self.inc(&AddressingModes::Absolute, bus),
+
+            (0b10, 0b000, 0b101) => self.asl(AddressingModes::ZeroPageX, bus),
+            (0b10, 0b001, 0b101) => self.rol(AddressingModes::ZeroPageX, bus),
+            (0b10, 0b010, 0b101) => self.lsr(AddressingModes::ZeroPageX, bus),
+            (0b10, 0b011, 0b101) => self.ror(AddressingModes::ZeroPageX, bus),
+            (0b10, 0b100, 0b101) => self.st(AddressingModes::ZeroPageY, LoadRegisters::X, bus),
+            (0b10, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageY, LoadRegisters::X, bus),
+            (0b10, 0b110, 0b101) => self.dec(&AddressingModes::ZeroPageX, bus),
+            (0b10, 0b111, 0b101) => self.inc(&AddressingModes::ZeroPageX, bus),
+
+            (0b10, 0b100, 0b110) => self.txs(),
+            (0b10, 0b101, 0b110) => self.tsx(),
+
+            (0b10, 0b000, 0b111) => self.asl(AddressingModes::AbsoluteX, bus),
+            (0b10, 0b001, 0b111) => self.rol(AddressingModes::AbsoluteX, bus),
+            (0b10, 0b010, 0b111) => self.lsr(AddressingModes::AbsoluteX, bus),
+            (0b10, 0b011, 0b111) => self.ror(AddressingModes::AbsoluteX, bus),
+            (0b10, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteY, LoadRegisters::X, bus),
+            (0b10, 0b110, 0b111) => self.dec(&AddressingModes::AbsoluteX, bus),
+            (0b10, 0b111, 0b111) => self.inc(&AddressingModes::AbsoluteX, bus),
+
             _ => println!(
                 "Opcode {opcode:02X} (aaa:{aaa:03b} bbb:{bbb:03b} cc:{cc:02b}) not implemented"
             ),
@@ -312,7 +444,15 @@ impl CPU {
 
                 ((upper_target as u16) << 8) | (lower_target as u16)
             }
+            AddressingModes::Relative => {
+                let offset = self.fetch(bus) as i8;
+                let base = self.registers.pc;
 
+                let addr = base.wrapping_add(offset as i16 as u16);
+
+                page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+                addr
+            }
             AddressingModes::NoneAddressing => 0,
         };
 
@@ -737,19 +877,34 @@ impl CPU {
     }
 
     // control instructions
-    fn brk(&mut self)
-    {
+    fn brk(&mut self, bus: &mut Bus) {
+        self.fetch(bus);
+
+        let pc = self.registers.get_pc();
+        let upper = (pc >> 8) as u8;
+        let lower = pc as u8;
+
+        self.push_stack(bus, upper);
+        self.push_stack(bus, lower);
+
+        let status = self.registers.get_status() | 0x30;
+        self.push_stack(bus, status);
+
         self.registers.interrupt_disable = true;
+
+        let lower_vector = self.read_bus(bus, 0xFFFE);
+        let upper_vector = self.read_bus(bus, 0xFFFF);
+        let new_pc = ((upper_vector as u16) << 8) | (lower_vector as u16);
+
+        self.registers.set_pc(new_pc);
     }
 
-    fn jmp(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus)
-    {
+    fn jmp(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
         let result = self.get_operand_address(addressing_mode, bus);
         self.registers.set_pc(result.address);
     }
 
-    fn jsr(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus)
-    {
+    fn jsr(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
         let result = self.get_operand_address(addressing_mode, bus);
         let pc = self.registers.get_pc().wrapping_sub(1);
         let upper = (pc >> 8) as u8;
@@ -763,8 +918,7 @@ impl CPU {
         self.registers.set_pc(result.address);
     }
 
-    fn rti(&mut self, bus: &mut Bus)
-    {
+    fn rti(&mut self, bus: &mut Bus) {
         let status = self.pop_stack(bus);
 
         let lower = self.pop_stack(bus);
@@ -775,8 +929,7 @@ impl CPU {
         self.registers.set_pc(new_pc);
     }
 
-    fn rts(&mut self, bus: &mut Bus)
-    {
+    fn rts(&mut self, bus: &mut Bus) {
         let lower = self.pop_stack(bus);
         let upper = self.pop_stack(bus);
 
@@ -785,8 +938,7 @@ impl CPU {
         self.registers.set_pc(new_pc);
     }
 
-    fn restore_status(&mut self, value: u8)
-    {
+    fn restore_status(&mut self, value: u8) {
         self.registers.negative = (value & 0x80) != 0;
         self.registers.overflow = (value & 0x40) != 0;
 
@@ -794,9 +946,7 @@ impl CPU {
         self.registers.interrupt_disable = (value & 0x04) != 0;
         self.registers.zero = (value & 0x02) != 0;
         self.registers.carry = (value & 0x01) != 0;
-
     }
-
 
     // easy flag sets
     fn set_zero(&mut self, data: u8) {
