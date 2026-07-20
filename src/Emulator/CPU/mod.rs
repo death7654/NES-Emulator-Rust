@@ -1,11 +1,11 @@
-use std::ptr::read;
-
-use crate::Emulator::{CPU::AddressingModes::ZeroPage, bus::Bus, memory::memory};
+use crate::emulator::bus::Bus;
 
 mod registers;
 pub struct CPU {
-    registers: registers::Registers,
-    cycles: u32,
+    pub registers: registers::Registers,
+    cycles: u64,
+    pub nmi: bool, // nonmaskable interrupts
+    pub irq: bool,
 }
 
 pub struct AddrResult {
@@ -25,8 +25,6 @@ pub enum AddressingModes {
     ZeroPageIndirectYPaged,   // Also known as (Indirect), Y
     Indirect,                 // Used exclusively by jump
     Accumulator,
-    Relative, // Used exclusively by branch
-    NoneAddressing,
 }
 
 pub enum LoadRegisters {
@@ -35,12 +33,29 @@ pub enum LoadRegisters {
     Y,
 }
 
+pub enum InterruptType {
+    IRQ,
+    NMI,
+}
+
 impl CPU {
     pub fn new() -> CPU {
+        println!("Initialized CPU");
         CPU {
             registers: registers::Registers::new(),
             cycles: 0,
+            nmi: false,
+            irq: false,
         }
+    }
+    pub fn reset(&mut self, bus: &Bus) {
+        let lo = bus.read(0xFFFC) as u16;
+        let hi = bus.read(0xFFFD) as u16;
+
+        self.registers.pc = (hi << 8) | lo;
+
+        self.registers.set_status(0x24); // Default flag state (Interrupt disable set)
+        self.cycles = 7;
     }
 
     pub fn fetch(&mut self, bus: &mut Bus) -> u8 {
@@ -51,17 +66,51 @@ impl CPU {
     }
 
     fn read_bus(&mut self, bus: &mut Bus, address: u16) -> u8 {
-        self.cycles += 1;
+        self.tick();
         bus.read(address)
     }
 
     fn write_bus(&mut self, bus: &mut Bus, address: u16, data: u8) {
-        self.cycles += 1;
+        self.tick();
         bus.write(address, data);
     }
 
+    pub fn handle_interrupts(&mut self, bus: &mut Bus, selection: u8) {
+        let interrupt = match selection {
+            0 => InterruptType::NMI,
+            1 => InterruptType::IRQ,
+            _ => return,
+        };
+
+        let pc = self.registers.get_pc();
+        let upper = (pc >> 8) as u8;
+        let lower = pc as u8;
+
+        // push onto stack
+        self.push_stack(bus, upper);
+        self.push_stack(bus, lower);
+
+        // push status
+        let status = (self.registers.get_status() & 0xEF) | 0x20;
+        self.push_stack(bus, status);
+
+        self.registers.interrupt_disable = true;
+
+        let vector_low = match interrupt {
+            InterruptType::NMI => 0xFFFA,
+            InterruptType::IRQ => 0xFFFE,
+        };
+
+        let lower_vector = self.read_bus(bus, vector_low);
+        let upper_vector = self.read_bus(bus, vector_low + 1);
+
+        let new_pc = ((upper_vector as u16) << 8) | (lower_vector as u16);
+
+        self.registers.set_pc(new_pc);
+    }
+
     pub fn tick(&mut self) {
-        self.cycles += 1;
+        self.cycles = self.cycles.wrapping_add(1);
     }
 
     pub fn execute(&mut self, opcode: u8, bus: &mut Bus) {
@@ -443,17 +492,16 @@ impl CPU {
                 };
 
                 ((upper_target as u16) << 8) | (lower_target as u16)
-            }
-            AddressingModes::Relative => {
-                let offset = self.fetch(bus) as i8;
-                let base = self.registers.pc;
+            } // AddressingModes::Relative => {
+              //     let offset = self.fetch(bus) as i8;
+              //     let base = self.registers.pc;
 
-                let addr = base.wrapping_add(offset as i16 as u16);
+              //     let addr = base.wrapping_add(offset as i16 as u16);
 
-                page_crossed = (base & 0xFF00) != (addr & 0xFF00);
-                addr
-            }
-            AddressingModes::NoneAddressing => 0,
+              //     page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+              //     addr
+              // }
+              // AddressingModes::NoneAddressing => 0,
         };
 
         AddrResult {
@@ -518,8 +566,7 @@ impl CPU {
     fn plp(&mut self, bus: &mut Bus) {
         self.tick();
         let stack_value = self.pop_stack(bus);
-
-        self.restore_status(stack_value);
+        self.registers.set_status(stack_value);
 
         self.tick();
     }
@@ -835,7 +882,7 @@ impl CPU {
 
         self.registers.carry = (value & 0x01) != 0;
         value >>= 1;
-        value |= (old_carry << 7);
+        value |= old_carry << 7;
 
         self.set_bitwise(&addressing_mode, result.address, value, bus);
     }
@@ -881,8 +928,8 @@ impl CPU {
         self.fetch(bus);
 
         let pc = self.registers.get_pc();
-        let upper = (pc >> 8) as u8;
-        let lower = pc as u8;
+        let upper = ((pc >> 8) & 0xFF) as u8;
+        let lower = (pc & 0xFF) as u8;
 
         self.push_stack(bus, upper);
         self.push_stack(bus, lower);
@@ -925,7 +972,7 @@ impl CPU {
         let upper = self.pop_stack(bus);
 
         let new_pc = ((upper as u16) << 8) | (lower as u16);
-        self.restore_status(status);
+        self.registers.set_status(status);
         self.registers.set_pc(new_pc);
     }
 
@@ -936,16 +983,6 @@ impl CPU {
         let pulled_pc = ((upper as u16) << 8) | (lower as u16);
         let new_pc = pulled_pc.wrapping_add(1);
         self.registers.set_pc(new_pc);
-    }
-
-    fn restore_status(&mut self, value: u8) {
-        self.registers.negative = (value & 0x80) != 0;
-        self.registers.overflow = (value & 0x40) != 0;
-
-        self.registers.decimal = (value & 0x08) != 0;
-        self.registers.interrupt_disable = (value & 0x04) != 0;
-        self.registers.zero = (value & 0x02) != 0;
-        self.registers.carry = (value & 0x01) != 0;
     }
 
     // easy flag sets

@@ -1,9 +1,10 @@
-pub struct memory {
+pub struct Memory {
     ram: [u8; 2048],
 }
 
-impl memory {
+impl Memory {
     pub fn new() -> Self {
+        println!("Initialized Memory");
         Self { ram: [0; 2048] }
     }
 

@@ -18,6 +18,7 @@ pub struct Registers {
 
 impl Registers {
     pub fn new() -> Registers {
+        println!("Initialized Registers");
         Registers {
             a: 0,
             x: 0,
@@ -106,5 +107,14 @@ impl Registers {
         }
 
         return ret;
+    }
+    pub fn set_status(&mut self, val: u8) {
+        self.negative = (val & (1 << 7)) != 0;
+        self.overflow = (val & (1 << 6)) != 0;
+        self.breakins = (val & (1 << 4)) != 0;
+        self.decimal = (val & (1 << 3)) != 0;
+        self.interrupt_disable = (val & (1 << 2)) != 0;
+        self.zero = (val & (1 << 1)) != 0;
+        self.carry = (val & (1 << 0)) != 0;
     }
 }
