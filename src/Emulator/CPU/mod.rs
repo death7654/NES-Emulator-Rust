@@ -4,7 +4,6 @@ mod registers;
 pub struct CPU {
     pub registers: registers::Registers,
     cycles: u64,
-    pub nmi: bool, // nonmaskable interrupts
     pub irq: bool,
 }
 
@@ -44,7 +43,6 @@ impl CPU {
         CPU {
             registers: registers::Registers::new(),
             cycles: 0,
-            nmi: false,
             irq: false,
         }
     }
@@ -66,12 +64,12 @@ impl CPU {
     }
 
     fn read_bus(&mut self, bus: &mut Bus, address: u16) -> u8 {
-        self.tick();
+        self.tick(bus);
         bus.read(address)
     }
 
     fn write_bus(&mut self, bus: &mut Bus, address: u16, data: u8) {
-        self.tick();
+        self.tick(bus);
         bus.write(address, data);
     }
 
@@ -109,8 +107,9 @@ impl CPU {
         self.registers.set_pc(new_pc);
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, bus: &mut Bus) {
         self.cycles = self.cycles.wrapping_add(1);
+        bus.step_ppu(1);
     }
 
     pub fn execute(&mut self, opcode: u8, bus: &mut Bus) {
@@ -137,10 +136,10 @@ impl CPU {
             (0b00, 0b001, 0b010) => self.plp(bus),
             (0b00, 0b010, 0b010) => self.pha(bus),
             (0b00, 0b011, 0b010) => self.pla(bus),
-            (0b00, 0b100, 0b010) => self.dey(),
-            (0b00, 0b101, 0b010) => self.tay(),
-            (0b00, 0b110, 0b010) => self.iny(),
-            (0b00, 0b111, 0b010) => self.inx(),
+            (0b00, 0b100, 0b010) => self.dey(bus),
+            (0b00, 0b101, 0b010) => self.tay(bus),
+            (0b00, 0b110, 0b010) => self.iny(bus),
+            (0b00, 0b111, 0b010) => self.inx(bus),
 
             (0b00, 0b001, 0b011) => self.bit(&AddressingModes::Absolute, bus),
             (0b00, 0b010, 0b011) => self.jmp(&AddressingModes::Absolute, bus),
@@ -166,7 +165,7 @@ impl CPU {
             (0b00, 0b001, 0b110) => self.sec(),
             (0b00, 0b010, 0b110) => self.cli(),
             (0b00, 0b011, 0b110) => self.sei(),
-            (0b00, 0b100, 0b110) => self.tya(),
+            (0b00, 0b100, 0b110) => self.tya(bus),
             (0b00, 0b101, 0b110) => self.clv(),
             (0b00, 0b110, 0b110) => self.cld(),
             (0b00, 0b111, 0b110) => self.sed(),
@@ -275,9 +274,9 @@ impl CPU {
             (0b10, 0b001, 0b010) => self.rol(AddressingModes::Accumulator, bus),
             (0b10, 0b010, 0b010) => self.lsr(AddressingModes::Accumulator, bus),
             (0b10, 0b011, 0b010) => self.ror(AddressingModes::Accumulator, bus),
-            (0b10, 0b100, 0b010) => self.txa(),
-            (0b10, 0b101, 0b010) => self.tax(),
-            (0b10, 0b110, 0b010) => self.dex(),
+            (0b10, 0b100, 0b010) => self.txa(bus),
+            (0b10, 0b101, 0b010) => self.tax(bus),
+            (0b10, 0b110, 0b010) => self.dex(bus),
             (0b10, 0b111, 0b010) => self.nop(),
 
             (0b10, 0b000, 0b011) => self.asl(AddressingModes::Absolute, bus),
@@ -298,8 +297,8 @@ impl CPU {
             (0b10, 0b110, 0b101) => self.dec(&AddressingModes::ZeroPageX, bus),
             (0b10, 0b111, 0b101) => self.inc(&AddressingModes::ZeroPageX, bus),
 
-            (0b10, 0b100, 0b110) => self.txs(),
-            (0b10, 0b101, 0b110) => self.tsx(),
+            (0b10, 0b100, 0b110) => self.txs(bus),
+            (0b10, 0b101, 0b110) => self.tsx(bus),
 
             (0b10, 0b000, 0b111) => self.asl(AddressingModes::AbsoluteX, bus),
             (0b10, 0b001, 0b111) => self.rol(AddressingModes::AbsoluteX, bus),
@@ -395,14 +394,14 @@ impl CPU {
         let offset: i8 = self.fetch(bus) as i8;
 
         if should_branch {
-            self.tick();
+            self.tick(bus);
             let old_pc = self.registers.pc;
             let new_pc = (old_pc as i32).wrapping_add(offset as i32) as u16;
 
             self.registers.pc = new_pc;
 
             if (old_pc & 0xFF00) != (new_pc & 0xFF00) {
-                self.tick();
+                self.tick(bus);
             }
         }
     }
@@ -524,7 +523,7 @@ impl CPU {
 
         // 6502 loads get an extra cycle penalty ONLY if a page boundary is crossed
         if res.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         self.load_into_register(register, data);
@@ -548,7 +547,7 @@ impl CPU {
             AddressingModes::AbsoluteX
             | AddressingModes::AbsoluteY
             | AddressingModes::ZeroPageIndirectYPaged => {
-                self.tick();
+                self.tick(bus);
             }
             _ => {}
         }
@@ -559,24 +558,24 @@ impl CPU {
     }
 
     fn php(&mut self, bus: &mut Bus) {
-        self.tick();
+        self.tick(bus);
         let status = self.registers.get_status() | 0x30;
         self.push_stack(bus, status);
     }
     fn plp(&mut self, bus: &mut Bus) {
-        self.tick();
+        self.tick(bus);
         let stack_value = self.pop_stack(bus);
         self.registers.set_status(stack_value);
 
-        self.tick();
+        self.tick(bus);
     }
     fn pha(&mut self, bus: &mut Bus) {
-        self.tick();
+        self.tick(bus);
         let a = self.registers.get_a();
         self.push_stack(bus, a);
     }
     fn pla(&mut self, bus: &mut Bus) {
-        self.tick();
+        self.tick(bus);
         let stack_value = self.pop_stack(bus);
 
         self.set_zero(stack_value);
@@ -584,7 +583,7 @@ impl CPU {
 
         self.registers.set_a(stack_value);
 
-        self.tick();
+        self.tick(bus);
     }
 
     // logic instructions
@@ -592,7 +591,7 @@ impl CPU {
         let result = self.get_operand_address(addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let mut a = self.registers.get_a();
@@ -622,7 +621,7 @@ impl CPU {
         let result = self.get_operand_address(addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let a = self.registers.get_a();
@@ -640,7 +639,7 @@ impl CPU {
         let result = self.get_operand_address(addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let a = self.registers.get_a();
@@ -660,13 +659,13 @@ impl CPU {
         memory = memory.wrapping_sub(1);
         self.set_bitwise(&addressing_mode, result.address, memory, bus);
     }
-    fn dex(&mut self) {
+    fn dex(&mut self, bus: &mut Bus) {
         let x = self.registers.get_x().wrapping_sub(1);
-        self.set_transfer_inc(LoadRegisters::X, x);
+        self.set_transfer_inc(LoadRegisters::X, x, bus);
     }
-    fn dey(&mut self) {
+    fn dey(&mut self, bus: &mut Bus) {
         let y = self.registers.get_y().wrapping_sub(1);
-        self.set_transfer_inc(LoadRegisters::Y, y);
+        self.set_transfer_inc(LoadRegisters::Y, y, bus);
     }
     fn inc(&mut self, addressing_mode: &AddressingModes, bus: &mut Bus) {
         let result = self.get_operand_address(addressing_mode, bus);
@@ -674,48 +673,48 @@ impl CPU {
         memory = memory.wrapping_add(1);
         self.set_bitwise(&addressing_mode, result.address, memory, bus);
     }
-    fn inx(&mut self) {
+    fn inx(&mut self, bus: &mut Bus) {
         let x = self.registers.get_x().wrapping_add(1);
-        self.set_transfer_inc(LoadRegisters::X, x);
+        self.set_transfer_inc(LoadRegisters::X, x, bus);
     }
-    fn iny(&mut self) {
+    fn iny(&mut self, bus: &mut Bus) {
         let y = self.registers.get_y().wrapping_add(1);
-        self.set_transfer_inc(LoadRegisters::Y, y);
+        self.set_transfer_inc(LoadRegisters::Y, y, bus);
     }
 
-    fn set_transfer_inc(&mut self, register: LoadRegisters, value: u8) {
+    fn set_transfer_inc(&mut self, register: LoadRegisters, value: u8, bus: &mut Bus) {
         self.set_zero(value);
         self.set_negative(value);
         self.load_into_register(register, value);
-        self.tick();
+        self.tick(bus);
     }
 
     // transfer
 
-    fn tax(&mut self) {
+    fn tax(&mut self, bus: &mut Bus) {
         let a = self.registers.get_a();
-        self.set_transfer_inc(LoadRegisters::X, a);
+        self.set_transfer_inc(LoadRegisters::X, a, bus);
     }
-    fn tay(&mut self) {
+    fn tay(&mut self, bus: &mut Bus) {
         let a = self.registers.get_a();
-        self.set_transfer_inc(LoadRegisters::Y, a);
+        self.set_transfer_inc(LoadRegisters::Y, a, bus);
     }
-    fn tsx(&mut self) {
+    fn tsx(&mut self, bus: &mut Bus) {
         let sp = self.registers.get_sp();
-        self.set_transfer_inc(LoadRegisters::X, sp);
+        self.set_transfer_inc(LoadRegisters::X, sp, bus);
     }
-    fn txa(&mut self) {
+    fn txa(&mut self, bus: &mut Bus) {
         let x = self.registers.get_x();
-        self.set_transfer_inc(LoadRegisters::A, x);
+        self.set_transfer_inc(LoadRegisters::A, x, bus);
     }
-    fn txs(&mut self) {
+    fn txs(&mut self, bus: &mut Bus) {
         let x = self.registers.get_x();
         self.registers.set_sp(x);
-        self.tick();
+        self.tick(bus);
     }
-    fn tya(&mut self) {
+    fn tya(&mut self, bus: &mut Bus) {
         let y = self.registers.get_y();
-        self.set_transfer_inc(LoadRegisters::A, y);
+        self.set_transfer_inc(LoadRegisters::A, y, bus);
     }
 
     // stack functions
@@ -744,7 +743,7 @@ impl CPU {
         let old_a = self.registers.get_a();
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let memory_value = self.read_bus(bus, result.address);
@@ -770,7 +769,7 @@ impl CPU {
         let old_a = self.registers.get_a();
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let memory_value = self.read_bus(bus, result.address);
@@ -804,7 +803,7 @@ impl CPU {
         let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let memory = self.read_bus(bus, result.address);
@@ -815,7 +814,7 @@ impl CPU {
         let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let memory = self.read_bus(bus, result.address);
@@ -827,7 +826,7 @@ impl CPU {
         let result = self.get_operand_address(&addressing_mode, bus);
 
         if result.page_crossed {
-            self.tick();
+            self.tick(bus);
         }
 
         let memory = self.read_bus(bus, result.address);
@@ -897,7 +896,7 @@ impl CPU {
             AddressingModes::Accumulator => self.registers.get_a(),
             _ => {
                 let val = self.read_bus(bus, address);
-                self.tick();
+                self.tick(bus);
                 val
             }
         }
@@ -915,7 +914,7 @@ impl CPU {
         match addressing_mode {
             AddressingModes::Accumulator => {
                 self.registers.set_a(value);
-                self.tick();
+                self.tick(bus);
             }
             _ => {
                 self.write_bus(bus, address, value);
@@ -957,7 +956,7 @@ impl CPU {
         let upper = (pc >> 8) as u8;
         let lower = pc as u8;
 
-        self.tick();
+        self.tick(bus);
 
         self.push_stack(bus, upper);
         self.push_stack(bus, lower);

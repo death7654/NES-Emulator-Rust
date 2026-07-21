@@ -1,6 +1,7 @@
 mod bus;
 mod cpu;
 mod memory;
+mod ppu;
 
 pub struct Emulator {
     pub cpu: cpu::CPU,

@@ -1,11 +1,15 @@
 use crate::emulator::memory;
+use crate::emulator::ppu;
 
 pub struct Bus {
     ram: memory::Memory,
     prg_rom: Vec<u8>,
-    
+    chr_rom: Vec<u8>,
     // Blargg's tests use this region for state and text streams
     wram: [u8; 0x2000],
+    pub ppu: ppu::PPU,
+
+    pub nmi: bool,
 }
 
 impl Bus {
@@ -15,7 +19,27 @@ impl Bus {
         Self {
             ram: memory,
             prg_rom: vec![0; 0x8000],
+            chr_rom: vec![0; 0x8000],
             wram: [0; 0x2000],
+            ppu: ppu::PPU::new(),
+            nmi: false,
+        }
+    }
+
+    pub fn step_ppu(&mut self, cycles: u32) {
+        for _ in 0..(cycles * 3) {
+            if self.ppu.step(&self.chr_rom) {
+                self.nmi = true;
+            }
+        }
+    }
+
+    pub fn poll_nmi(&mut self) -> bool {
+        if self.nmi {
+            self.nmi = false; // Acknowledge signal
+            true
+        } else {
+            false
         }
     }
 

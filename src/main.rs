@@ -6,7 +6,7 @@ fn main() {
     let mut emulator = emulator::Emulator::new();
 
     let mut file =
-        File::open("test_roms/blargg_nes_cpu_test5/official.nes").expect("Failed to open ROM file");
+        File::open("test_roms/instr_test-v3/official_only.nes").expect("Failed to open ROM file");
     let mut rom_buffer = Vec::new();
     file.read_to_end(&mut rom_buffer)
         .expect("Failed to read ROM data");
@@ -24,8 +24,7 @@ fn main() {
     println!("Starting Emulator");
     let mut running = true;
     while running {
-        if emulator.cpu.nmi {
-            emulator.cpu.nmi = false;
+        if emulator.bus.poll_nmi() {
             emulator.cpu.handle_interrupts(&mut emulator.bus, 0);
             continue;
         }
