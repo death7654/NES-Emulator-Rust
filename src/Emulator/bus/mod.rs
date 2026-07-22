@@ -1,10 +1,10 @@
+use crate::emulator::cartridge;
 use crate::emulator::memory;
 use crate::emulator::ppu;
 
 pub struct Bus {
     ram: memory::Memory,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
+    cartridge: cartridge::Cartridge,
     // Blargg's tests use this region for state and text streams
     wram: [u8; 0x2000],
     pub ppu: ppu::PPU,
@@ -16,10 +16,10 @@ impl Bus {
     pub fn new() -> Self {
         println!("Initialized Bus");
         let memory = memory::Memory::new();
+        let cart = cartridge::Cartridge::new();
         Self {
             ram: memory,
-            prg_rom: vec![0; 0x8000],
-            chr_rom: vec![0; 0x8000],
+            cartridge: cart,
             wram: [0; 0x2000],
             ppu: ppu::PPU::new(),
             nmi: false,
@@ -28,7 +28,7 @@ impl Bus {
 
     pub fn step_ppu(&mut self, cycles: u32) {
         for _ in 0..(cycles * 3) {
-            if self.ppu.step(&self.chr_rom) {
+            if self.ppu.step(&self.cartridge) {
                 self.nmi = true;
             }
         }
@@ -43,18 +43,19 @@ impl Bus {
         }
     }
 
-    pub fn read(&self, address: u16) -> u8 {
+    pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1FFF => self.ram.read(address),
-            0x2002 => {
-                0x80 // simulate existace of PPU
-            }
+            
+            // PPU Register range (0x2000 - 0x3FFF, mirrored every 8 bytes)
+            0x2000..=0x3FFF => self.ppu.cpu_read(&self.cartridge, address),
+
             0x6000..=0x7FFF => self.wram[(address - 0x6000) as usize],
 
             0x8000..=0xFFFF => {
                 let rom_address = address - 0x8000;
-                let mirrored_address = rom_address as usize % self.prg_rom.len();
-                self.prg_rom[mirrored_address]
+                let mirrored_address = rom_address as usize % self.cartridge.prg_rom.len();
+                self.cartridge.prg_rom[mirrored_address]
             }
             _ => 0,
         }
@@ -64,6 +65,11 @@ impl Bus {
         match address {
             0x0000..=0x1FFF => {
                 self.ram.write(address, data);
+            }
+
+            // PPU Register range (0x2000 - 0x3FFF, mirrored every 8 bytes)
+            0x2000..=0x3FFF => {
+                self.ppu.cpu_write(&mut self.cartridge, address, data);
             }
 
             // Catch CPU writes to Blargg's test window
@@ -83,6 +89,6 @@ impl Bus {
     }
 
     pub fn load_rom(&mut self, rom_data: &[u8]) {
-        self.prg_rom = rom_data.to_vec();
+        self.cartridge.prg_rom = rom_data.to_vec();
     }
 }

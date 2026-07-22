@@ -19,7 +19,7 @@ fn main() {
         panic!("ROM file is too small to contain a valid iNES header!");
     }
 
-    emulator.cpu.reset(&emulator.bus);
+    emulator.cpu.reset(&mut emulator.bus);
 
     println!("Starting Emulator");
     let mut running = true;

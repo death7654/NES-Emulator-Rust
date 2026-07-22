@@ -46,7 +46,7 @@ impl CPU {
             irq: false,
         }
     }
-    pub fn reset(&mut self, bus: &Bus) {
+    pub fn reset(&mut self, bus: &mut Bus) {
         let lo = bus.read(0xFFFC) as u16;
         let hi = bus.read(0xFFFD) as u16;
 
