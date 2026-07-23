@@ -28,8 +28,11 @@ impl Bus {
 
     pub fn step_ppu(&mut self, cycles: u32) {
         for _ in 0..(cycles * 3) {
-            if self.ppu.step(&self.cartridge) {
+            self.ppu.step(&self.cartridge);
+            if self.ppu.request_nmi
+            {
                 self.nmi = true;
+                self.ppu.request_nmi = false;
             }
         }
     }
@@ -46,7 +49,7 @@ impl Bus {
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000..=0x1FFF => self.ram.read(address),
-            
+
             // PPU Register range (0x2000 - 0x3FFF, mirrored every 8 bytes)
             0x2000..=0x3FFF => self.ppu.cpu_read(&self.cartridge, address),
 

@@ -23,14 +23,14 @@ pub struct PPU {
     ppu_bus_address: u16,
 
     // registers the cpu can access
-    ppuctrl: u8,      // 0x2000, write only
-    ppumask: u8,      // 0x2001, write only
-    ppustatus: u8,    // 0x2002, Read Only
-    oam_address: u16, // 0x2003 write only
-    oam_data: u8,     // 0x2004, read write
-    ppu_scroll: u8,   // 0x2005, write only
-    ppu_address: u8,  // 0x2006 write only
-    ppu_data: u8,     // 0x2007 read write
+    ppuctrl: u8,     // 0x2000, write only
+    ppumask: u8,     // 0x2001, write only
+    ppustatus: u8,   // 0x2002, Read Only
+    oam_address: u8, // 0x2003, write only
+    oam_data: u8,    // 0x2004, read write
+    ppu_scroll: u8,  // 0x2005, write only
+    ppu_address: u8, // 0x2006, write only
+    ppu_data: u8,    // 0x2007, read write
 
     oam_dma: u8,
 
@@ -40,19 +40,23 @@ pub struct PPU {
     x: u8,
     w: bool,
 
-    ppu_dots: u16,  // 0 to 341
-    scanlines: u16, // 0 to 261
+    ppu_dots: u16,      // 0 to 341
+    scanlines: u16,     // 0 to 261
+    is_odd_frame: bool, // added for odd-frame cycle skipping
 
-    // temporary register
-    latch_nametable_byte: u8,
-    latch_attribute_byte: u8,
-    latch_bg_low_byte: u8,
-    latch_bg_high_byte: u8,
+    // temporary fetch latches
+    nt_byte: u8,
+    at_byte: u8,
+    pattern_low: u8,
+    pattern_high: u8,
 
-    bg_shift_pattern_low: u16,
-    bg_shift_pattern_high: u16,
-    bg_shift_attrib_low: u16,
-    bg_shift_attrib_high: u16,
+    // shift registers
+    pattern_shift_lo: u16,
+    pattern_shift_hi: u16,
+    attrib_shift_lo: u16,
+    attrib_shift_hi: u16,
+
+    pub request_nmi: bool,
 }
 
 impl PPU {
@@ -79,14 +83,16 @@ impl PPU {
             w: false,
             ppu_dots: 0,
             scanlines: 0,
-            latch_nametable_byte: 0,
-            latch_attribute_byte: 0,
-            latch_bg_low_byte: 0,
-            latch_bg_high_byte: 0,
-            bg_shift_pattern_low: 0,
-            bg_shift_pattern_high: 0,
-            bg_shift_attrib_low: 0,
-            bg_shift_attrib_high: 0,
+            is_odd_frame: false,
+            nt_byte: 0,
+            at_byte: 0,
+            pattern_low: 0,
+            pattern_high: 0,
+            pattern_shift_lo: 0,
+            pattern_shift_hi: 0,
+            attrib_shift_lo: 0,
+            attrib_shift_hi: 0,
+            request_nmi: false,
         }
     }
     fn render_pixel(&mut self) {
@@ -94,13 +100,22 @@ impl PPU {
         let bit_mux: u16 = 15 - (self.x as u16);
 
         // Extract pattern bits (bitplanes 0 and 1)
-        let p_bit0 = ((self.bg_shift_pattern_low >> bit_mux) & 0x01) as u8;
-        let p_bit1 = ((self.bg_shift_pattern_high >> bit_mux) & 0x01) as u8;
-        let pattern_color = (p_bit1 << 1) | p_bit0;
+        let p_bit0 = ((self.pattern_shift_lo >> bit_mux) & 0x01) as u8;
+        let p_bit1 = ((self.pattern_shift_hi >> bit_mux) & 0x01) as u8;
+
+        let show_left_bg = (self.ppumask & 0x02) != 0;
+        let x = (self.ppu_dots - 1) as usize;
+
+        // Clip background if x < 8 and bit 1 is cleared
+        let pattern_color = if x < 8 && !show_left_bg {
+            0
+        } else {
+            (p_bit1 << 1) | p_bit0
+        };
 
         // Extract palette ID bits
-        let a_bit0 = ((self.bg_shift_attrib_low >> bit_mux) & 0x01) as u8;
-        let a_bit1 = ((self.bg_shift_attrib_high >> bit_mux) & 0x01) as u8;
+        let a_bit0 = ((self.attrib_shift_lo >> bit_mux) & 0x01) as u8;
+        let a_bit1 = ((self.attrib_shift_hi >> bit_mux) & 0x01) as u8;
         let palette_id = (a_bit1 << 1) | a_bit0;
 
         // Resolve RAM palette index
@@ -120,141 +135,79 @@ impl PPU {
     }
 
     fn shift_bg_registers(&mut self) {
-        self.bg_shift_pattern_low <<= 1;
-        self.bg_shift_pattern_high <<= 1;
-        self.bg_shift_attrib_low <<= 1;
-        self.bg_shift_attrib_high <<= 1;
+        self.pattern_shift_lo <<= 1;
+        self.pattern_shift_hi <<= 1;
+        self.attrib_shift_lo <<= 1;
+        self.attrib_shift_hi <<= 1;
     }
 
-    pub fn step(&mut self, cartridge: &Cartridge) -> bool {
-        let is_rendering_line = self.scanlines <= 239 || self.scanlines == 261;
-        let is_visible_line = self.scanlines <= 239;
+    fn load_shift_registers(&mut self) {
+        self.pattern_shift_lo = (self.pattern_shift_lo & 0xFF00) | (self.pattern_low as u16);
+        self.pattern_shift_hi = (self.pattern_shift_hi & 0xFF00) | (self.pattern_high as u16);
 
-        if is_rendering_line {
-            // Pixel Output & Shift Register Updates
-            if is_visible_line && self.ppu_dots >= 1 && self.ppu_dots <= 256 {
-                self.render_pixel();
-                self.shift_bg_registers();
-            }
+        // Determine palette bits for current 16x16 tile quadrant
+        let shift = ((self.v >> 4) & 0x04) | (self.v & 0x02);
+        let palette_id = (self.at_byte >> shift) & 0x03;
 
-            // Shifts also happen during tile pre-fetching at the end of the scanline!
-            if (self.ppu_dots >= 321 && self.ppu_dots <= 336) {
-                self.shift_bg_registers();
-            }
+        let attr_lo = if (palette_id & 0x01) != 0 { 0xFF } else { 0x00 };
+        let attr_hi = if (palette_id & 0x02) != 0 { 0xFF } else { 0x00 };
 
-            // Memory Fetches Loop
-            if (self.ppu_dots >= 1 && self.ppu_dots <= 256)
-                || (self.ppu_dots >= 321 && self.ppu_dots <= 336)
-            {
-                let mods = self.ppu_dots % 8;
-                match mods {
-                    1 => {
-                        let address = 0x2000 | (self.v & 0x0FFF);
-                        self.ppu_bus_address = address;
-                    }
-                    2 => {
-                        self.latch_nametable_byte = self.ppu_read(cartridge, self.ppu_bus_address);
-                    }
-                    3 => {
-                        let attribute_address = 0x23C0
-                            | (self.v & 0x0C00)
-                            | ((self.v >> 4) & 0x0038)
-                            | ((self.v >> 2) & 0x0007);
+        self.attrib_shift_lo = (self.attrib_shift_lo & 0xFF00) | attr_lo;
+        self.attrib_shift_hi = (self.attrib_shift_hi & 0xFF00) | attr_hi;
+    }
 
-                        self.ppu_bus_address = attribute_address;
-                    }
-                    4 => {
-                        let attribute_byte = self.ppu_read(cartridge, self.ppu_bus_address);
-                        let shift = ((self.v >> 4) & 0x04) | (self.v & 0x02);
-                        self.latch_attribute_byte = (attribute_byte >> shift) & 0x03;
-                    }
-                    5 => {
-                        let pattern_table_base = if (self.ppuctrl & 0x10) != 0 {
-                            0x1000
-                        } else {
-                            0x0000
-                        };
-                        let fine_y = (self.v >> 12) & 0x07;
-                        let pattern_addr =
-                            pattern_table_base + ((self.latch_nametable_byte as u16) << 4) + fine_y;
+    pub fn step(&mut self, cartridge: &Cartridge) {
+        //  Render active pixel first using current shift registers
+        if self.scanlines <= 239 && (1..=256).contains(&self.ppu_dots) {
+            self.render_pixel();
+        }
 
-                        self.ppu_bus_address = pattern_addr;
-                    }
-                    6 => {
-                        self.latch_bg_low_byte = self.ppu_read(cartridge, self.ppu_bus_address);
-                    }
-                    7 => {
-                        let pattern_table_base = if (self.ppuctrl & 0x10) != 0 {
-                            0x1000
-                        } else {
-                            0x0000
-                        };
-                        let fine_y = (self.v >> 12) & 0x07;
-                        let pattern_addr = pattern_table_base
-                            + ((self.latch_nametable_byte as u16) << 4)
-                            + fine_y
-                            + 8;
+        let rendering_enabled = (self.ppumask & 0x18) != 0;
 
-                        self.ppu_bus_address = pattern_addr;
-                    }
-                    0 => {
-                        self.latch_bg_high_byte = self.ppu_read(cartridge, self.ppu_bus_address);
+        //  Process memory fetches & scrolling updates
+        if rendering_enabled {
+            self.process_fetches_and_scrolling(cartridge);
+        }
 
-                        // Load latched bytes into the bottom 8 bits of 16-bit registers
-                        self.bg_shift_pattern_low =
-                            (self.bg_shift_pattern_low & 0xFF00) | (self.latch_bg_low_byte as u16);
-                        self.bg_shift_pattern_high = (self.bg_shift_pattern_high & 0xFF00)
-                            | (self.latch_bg_high_byte as u16);
+        // Shift active background registers every dot during fetch windows
+        let is_rendering_line = (self.scanlines <= 239 || self.scanlines == 261) && rendering_enabled;
+        if is_rendering_line && ((1..=256).contains(&self.ppu_dots) || (321..=336).contains(&self.ppu_dots)) {
+            self.shift_bg_registers();
+        }
 
-                        let attr_bit0 = if (self.latch_attribute_byte & 0x01) != 0 {
-                            0xFF
-                        } else {
-                            0x00
-                        };
-                        let attr_bit1 = if (self.latch_attribute_byte & 0x02) != 0 {
-                            0xFF
-                        } else {
-                            0x00
-                        };
-
-                        self.bg_shift_attrib_low = (self.bg_shift_attrib_low & 0xFF00) | attr_bit0;
-                        self.bg_shift_attrib_high =
-                            (self.bg_shift_attrib_high & 0xFF00) | attr_bit1;
-
-                        self.increment_coarse_x();
-                    }
-                    _ => {}
-                }
-            }
-
-            // Scroll Register Housekeeping
-            if self.ppu_dots == 256 {
-                self.increment_fine_y();
-            }
-
-            if self.ppu_dots == 257 {
-                self.copy_x();
-            }
-
-            // Pre-render line (261) vertical scroll reset
-            if self.scanlines == 261 && self.ppu_dots >= 280 && self.ppu_dots <= 304 {
-                self.copy_y();
+        // VBlank entry and  NMI trigger 
+        if self.scanlines == 241 && self.ppu_dots == 1 {
+            self.ppustatus |= 0x80;
+            if (self.ppuctrl & 0x80) != 0 {
+                self.request_nmi = true;
             }
         }
 
-        // Dot and Scanline Advancement
+        // Clear VBlank and status flags on pre-render line
+        if self.scanlines == 261 && self.ppu_dots == 1 {
+            self.ppustatus &= !0xE0;
+        }
+
+        // Clock timing progression
         self.ppu_dots += 1;
-        if self.ppu_dots >= 341 {
+
+        // Odd frame cycle skip handling
+        if self.scanlines == 261 && rendering_enabled && self.is_odd_frame && self.ppu_dots == 339 {
+            self.ppu_dots = 0;
+            self.scanlines = 0;
+            self.is_odd_frame = !self.is_odd_frame;
+            return;
+        }
+
+        if self.ppu_dots > 340 {
             self.ppu_dots = 0;
             self.scanlines += 1;
 
-            if self.scanlines >= 262 {
+            if self.scanlines > 261 {
                 self.scanlines = 0;
-                return true; // Frame complete
+                self.is_odd_frame = !self.is_odd_frame;
             }
         }
-
-        false
     }
     pub fn increment_fine_y(&mut self) {
         if (self.v & 0x7000) != 0x7000 {
@@ -294,6 +247,61 @@ impl PPU {
         }
     }
 
+   pub fn process_fetches_and_scrolling(&mut self, cartridge: &Cartridge) {
+        let is_visible_scanline = self.scanlines <= 239;
+        let is_prerender_scanline = self.scanlines == 261;
+
+        if !is_visible_scanline && !is_prerender_scanline {
+            return;
+        }
+
+        // --- A. Background Tile Fetches ---
+        if (1..=256).contains(&self.ppu_dots) || (321..=336).contains(&self.ppu_dots) {
+            match self.ppu_dots % 8 {
+                1 => {
+                    let address = 0x2000 | (self.v & 0x0FFF);
+                    self.nt_byte = self.ppu_read(cartridge, address);
+                }
+                3 => {
+                    let address = 0x23C0
+                        | (self.v & 0x0C00)
+                        | ((self.v >> 4) & 0x38)
+                        | ((self.v >> 2) & 0x07);
+                    self.at_byte = self.ppu_read(cartridge, address);
+                }
+                5 => {
+                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 { 0x1000 } else { 0x0000 };
+                    let fine_y = (self.v >> 12) & 0x07;
+                    let address = bg_table_base + ((self.nt_byte as u16) << 4) + fine_y;
+                    self.pattern_low = self.ppu_read(cartridge, address);
+                }
+                7 => {
+                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 { 0x1000 } else { 0x0000 };
+                    let fine_y = (self.v >> 12) & 0x07;
+                    let address = bg_table_base + ((self.nt_byte as u16) << 4) + fine_y + 8;
+                    self.pattern_high = self.ppu_read(cartridge, address);
+                }
+                0 => {
+                    self.load_shift_registers();
+                    self.increment_coarse_x();
+                }
+                _ => {}
+            }
+        }
+
+        // --- B. Scroll & Line Maintenance ---
+        if self.ppu_dots == 256 {
+            self.increment_fine_y();
+        }
+
+        if self.ppu_dots == 257 {
+            self.copy_x();
+        }
+
+        if is_prerender_scanline && (280..=304).contains(&self.ppu_dots) {
+            self.copy_y();
+        }
+    }
     pub fn ppu_read(&self, cartridge: &Cartridge, mut addr: u16) -> u8 {
         // PPU address bus is 14 bits wide
         addr &= 0x3FFF;
@@ -420,7 +428,7 @@ impl PPU {
 
             // 0x2003, set oam address
             3 => {
-                self.oam_address = data as u16;
+                self.oam_address = data;
             }
 
             // 0x2004, set oam data
