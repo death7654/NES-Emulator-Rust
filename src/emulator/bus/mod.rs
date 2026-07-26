@@ -58,14 +58,7 @@ impl Bus {
 
             0x6000..=0x7FFF => self.wram[(address - 0x6000) as usize],
 
-            0x8000..=0xFFFF => {
-                let rom_address = address - 0x8000;
-                self.cartridge
-                    .mapper
-                    .as_mut()
-                    .unwrap()
-                    .cpu_read(rom_address)
-            }
+            0x8000..=0xFFFF => self.cartridge.mapper.as_mut().unwrap().cpu_read(address),
             _ => 0,
         }
     }

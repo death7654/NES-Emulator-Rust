@@ -1,5 +1,5 @@
 #[derive(Clone, Copy)]
-enum Mirroring {
+pub enum Mirroring {
     Horizontal,
     Vertical,
     FourScreen,
@@ -35,7 +35,8 @@ impl Mapper for Mapper0 {
     fn cpu_read(&self, addr: u16) -> u8 {
         match addr {
             0x8000..=0xFFFF => {
-                let mut mapped_addr = addr as usize;
+                let mut mapped_addr = (addr - 0x8000) as usize;
+                mapped_addr = mapped_addr as usize % self.prg_rom.len();
                 if self.prg_banks == 1 {
                     mapped_addr %= 0x4000;
                 }
@@ -73,22 +74,22 @@ impl Cartridge {
         }
     }
     pub fn load(bytes: &[u8]) -> Result<Self, String> {
-        if &bytes[0..4] != b"NES\x1A" {
+        // 1. Safety check for header
+        if bytes.len() < 16 || &bytes[0..4] != b"NES\x1A" {
             return Err("Invalid iNES header".to_string());
         }
 
         let prg_size = bytes[4] as usize * 16384; // 16KB units
-        let chr_size = bytes[5] as usize * 8192; // 8KB units
-
-        let mapper_low = bytes[6] >> 4;
-        let mapper_high = bytes[7] & 0xF0;
-        let mapper_id = mapper_high | mapper_low;
-
-        let prg_start = 16;
-        let prg_end = prg_start + prg_size;
-        let prg_rom = bytes[prg_start..prg_end].to_vec();
+        let chr_banks = bytes[5] as usize;
+        let chr_size = chr_banks * 8192; // 8KB units
 
         let flags6 = bytes[6];
+        let flags7 = bytes[7];
+
+        let mapper_low = flags6 >> 4;
+        let mapper_high = flags7 & 0xF0;
+        let mapper_id = mapper_high | mapper_low;
+
         let has_trainer = (flags6 & 0x04) != 0;
 
         let mirroring = if (flags6 & 0x08) != 0 {
@@ -99,35 +100,43 @@ impl Cartridge {
             Mirroring::Horizontal
         };
 
-        let mut offset = 16;
+        // dvance through the file linearly
+        let mut offset = 16; // Skip header
+
         if has_trainer {
-            offset += 512; // skip 512-byte trainer if present
+            offset += 512; // Skip 512-byte trainer if present
         }
 
-        let chr_banks = bytes[5] as usize;
+        let expected_chr_size = if chr_banks > 0 { chr_size } else { 0 };
+        if bytes.len() < offset + prg_size + expected_chr_size {
+            return Err(
+                "File truncated: actual length is smaller than header specification".to_string(),
+            );
+        }
+
+        // Slice PRG-ROM and advance offset past it
+        let prg_rom = bytes[offset..offset + prg_size].to_vec();
+        offset += prg_size;
+
+        // Slice CHR-ROM  or set up CHR-RAM
         let (chr_rom, chr_is_ram) = if chr_banks == 0 {
-            // CHR banks == 0 means the cartridge uses CHR-RAM instead of
-            // CHR-ROM; start it zeroed, writable via ppu_write.
-            (vec![0u8; 8 * 1024], true)
+            // 8KB of RAM allocated when no CHR banks are present in the file
+            (vec![0u8; 8192], true)
         } else {
-            let chr_size = chr_banks * 8 * 1024;
             (bytes[offset..offset + chr_size].to_vec(), false)
         };
 
-        // Factory selection based on Mapper ID
+        // Instantiate mapper
         let mapper: Box<dyn Mapper> = match mapper_id {
             0 => Box::new(Mapper0::new(prg_rom, chr_rom, chr_is_ram)),
-            // 1 => Box::new(Mapper1::new(prg_rom, chr_rom)), // MMC1
-            // 2 => Box::new(Mapper2::new(prg_rom, chr_rom)), // UxROM
             _ => return Err(format!("Unsupported Mapper ID: {}", mapper_id)),
         };
 
         Ok(Self {
             mapper: Some(mapper),
-            mirroring: mirroring,
+            mirroring,
         })
     }
-
     pub fn map_nametable_address(&self, address: u16) -> usize {
         let addr = (address - 0x2000) as usize;
         let table = addr / 0x400;
