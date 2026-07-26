@@ -13,12 +13,32 @@ pub const NES_SYSTEM_PALETTE: [u32; 64] = [
 
 pub const SCREEN_WIDTH: usize = 256;
 pub const SCREEN_HEIGHT: usize = 240;
+
+#[derive(Clone, Copy, Default)]
+struct RenderSprite {
+    x: u8,             // X coordinate (decremented each dot)
+    pattern_low: u8,   // Bitplane 0 pattern byte (already flipped if needed)
+    pattern_high: u8,  // Bitplane 1 pattern byte (already flipped if needed)
+    attribute: u8,     // Attributes (palette, priority, flip)
+    is_sprite_0: bool, // True if this sprite came from OAM index 0
+}
+
 pub struct PPU {
-    pub frame_buffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
+    pub frame_buffer: Vec<u32>,
     // ram
     pub vram: [u8; 2048],      // mapped as 0x2000 -> 0x2EFF
     pub palette_ram: [u8; 32], // mapped 0x3F00 -> 0x3F1F
+
     pub oam_ram: [u8; 256],
+    secondary_oam_ram: [u8; 32],
+    active_sprites: [RenderSprite; 8],
+    active_sprite_count: usize,
+
+    // sprite evaluation pipeline state
+    secondary_sprite_count: usize,
+    secondary_sprite0: [bool; 8],
+    sprite_eval_target_line: u16,
+
     vram_read_buffer: u8,
     ppu_bus_address: u16,
 
@@ -40,8 +60,8 @@ pub struct PPU {
     x: u8,
     w: bool,
 
-    ppu_dots: u16,      // 0 to 341
-    scanlines: u16,     // 0 to 261
+    pub ppu_dots: u16,  // 0 to 341
+    pub scanlines: u16, // 0 to 261
     is_odd_frame: bool, // added for odd-frame cycle skipping
 
     // temporary fetch latches
@@ -57,15 +77,22 @@ pub struct PPU {
     attrib_shift_hi: u16,
 
     pub request_nmi: bool,
+    pub frame_complete: bool,
 }
 
 impl PPU {
     pub fn new() -> Self {
         Self {
-            frame_buffer: [0; SCREEN_WIDTH * SCREEN_HEIGHT],
+            frame_buffer: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT],
             vram: [0; 2048],
             palette_ram: [0; 32],
             oam_ram: [0; 256],
+            secondary_oam_ram: [0xFF; 32],
+            active_sprites: [RenderSprite::default(); 8],
+            active_sprite_count: 0,
+            secondary_sprite_count: 0,
+            secondary_sprite0: [false; 8],
+            sprite_eval_target_line: 0,
             vram_read_buffer: 0,
             ppu_bus_address: 0,
             ppuctrl: 0,
@@ -93,43 +120,101 @@ impl PPU {
             attrib_shift_lo: 0,
             attrib_shift_hi: 0,
             request_nmi: false,
+            frame_complete: false,
         }
     }
+
     fn render_pixel(&mut self) {
         // Determine which bit in the high byte of the shift register we are reading
         let bit_mux: u16 = 15 - (self.x as u16);
 
-        // Extract pattern bits (bitplanes 0 and 1)
+        // Extract background pattern bits (bitplanes 0 and 1)
         let p_bit0 = ((self.pattern_shift_lo >> bit_mux) & 0x01) as u8;
         let p_bit1 = ((self.pattern_shift_hi >> bit_mux) & 0x01) as u8;
 
+        let show_bg = (self.ppumask & 0x08) != 0;
         let show_left_bg = (self.ppumask & 0x02) != 0;
         let x = (self.ppu_dots - 1) as usize;
 
-        // Clip background if x < 8 and bit 1 is cleared
-        let pattern_color = if x < 8 && !show_left_bg {
+        // Clip background if x < 8 and left-clip bit is cleared, or bg disabled entirely
+        let bg_color = if !show_bg || (x < 8 && !show_left_bg) {
             0
         } else {
             (p_bit1 << 1) | p_bit0
         };
 
-        // Extract palette ID bits
+        // Extract background palette ID bits
         let a_bit0 = ((self.attrib_shift_lo >> bit_mux) & 0x01) as u8;
         let a_bit1 = ((self.attrib_shift_hi >> bit_mux) & 0x01) as u8;
-        let palette_id = (a_bit1 << 1) | a_bit0;
+        let bg_palette_id = (a_bit1 << 1) | a_bit0;
 
-        // Resolve RAM palette index
-        let palette_addr = if pattern_color == 0 {
-            0
+        // --- Sprites ---
+        let show_sprites = (self.ppumask & 0x10) != 0;
+        let show_left_sprites = (self.ppumask & 0x04) != 0;
+
+        let mut sprite_color: u8 = 0;
+        let mut sprite_palette_id: u8 = 0;
+        let mut sprite_behind_bg = false;
+        let mut sprite_is_zero = false;
+
+        if show_sprites && !(x < 8 && !show_left_sprites) {
+            // OAM index priority: first opaque sprite pixel found wins
+            for i in 0..self.active_sprite_count {
+                let sprite = &self.active_sprites[i];
+                let sx = sprite.x as usize;
+                if x >= sx && x < sx + 8 {
+                    let bit = 7 - (x - sx) as u8; // flip already baked into pattern bytes
+                    let lo = (sprite.pattern_low >> bit) & 0x01;
+                    let hi = (sprite.pattern_high >> bit) & 0x01;
+                    let color = (hi << 1) | lo;
+                    if color != 0 {
+                        sprite_color = color;
+                        sprite_palette_id = sprite.attribute & 0x03;
+                        sprite_behind_bg = (sprite.attribute & 0x20) != 0;
+                        sprite_is_zero = sprite.is_sprite_0;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Sprite 0 hit: both layers opaque, both layers enabled, not at x == 255
+        if sprite_is_zero
+            && bg_color != 0
+            && sprite_color != 0
+            && show_bg
+            && show_sprites
+            && x != 255
+        {
+            self.ppustatus |= 0x40;
+        }
+
+        // Priority multiplexer between background and sprite layers
+        let (final_color, final_palette, is_sprite) = if bg_color == 0 && sprite_color == 0 {
+            (0u8, 0u8, false)
+        } else if bg_color == 0 {
+            (sprite_color, sprite_palette_id, true)
+        } else if sprite_color == 0 {
+            (bg_color, bg_palette_id, false)
+        } else if sprite_behind_bg {
+            (bg_color, bg_palette_id, false)
         } else {
-            ((palette_id * 4) + pattern_color) as usize
+            (sprite_color, sprite_palette_id, true)
+        };
+
+        // Resolve RAM palette index (sprite palettes live at 0x10-0x1F within palette_ram)
+        let palette_addr = if final_color == 0 {
+            0
+        } else if is_sprite {
+            0x10 + ((final_palette * 4) + final_color) as usize
+        } else {
+            ((final_palette * 4) + final_color) as usize
         };
 
         let sys_palette_index = self.palette_ram[palette_addr] & 0x3F;
         let rgb_color = NES_SYSTEM_PALETTE[sys_palette_index as usize];
 
         // Plot to frame buffer
-        let x = (self.ppu_dots - 1) as usize;
         let y = self.scanlines as usize;
         self.frame_buffer[y * SCREEN_WIDTH + x] = rgb_color;
     }
@@ -155,7 +240,6 @@ impl PPU {
         self.attrib_shift_lo = (self.attrib_shift_lo & 0xFF00) | attr_lo;
         self.attrib_shift_hi = (self.attrib_shift_hi & 0xFF00) | attr_hi;
     }
-
     pub fn step(&mut self, cartridge: &Cartridge) {
         //  Render active pixel first using current shift registers
         if self.scanlines <= 239 && (1..=256).contains(&self.ppu_dots) {
@@ -164,18 +248,22 @@ impl PPU {
 
         let rendering_enabled = (self.ppumask & 0x18) != 0;
 
-        //  Process memory fetches & scrolling updates
+        //  Process memory fetches, scrolling updates, and sprite evaluation
         if rendering_enabled {
             self.process_fetches_and_scrolling(cartridge);
+            self.process_sprite_evaluation(cartridge);
         }
 
         // Shift active background registers every dot during fetch windows
-        let is_rendering_line = (self.scanlines <= 239 || self.scanlines == 261) && rendering_enabled;
-        if is_rendering_line && ((1..=256).contains(&self.ppu_dots) || (321..=336).contains(&self.ppu_dots)) {
+        let is_rendering_line =
+            (self.scanlines <= 239 || self.scanlines == 261) && rendering_enabled;
+        if is_rendering_line
+            && ((1..=256).contains(&self.ppu_dots) || (321..=336).contains(&self.ppu_dots))
+        {
             self.shift_bg_registers();
         }
 
-        // VBlank entry and  NMI trigger 
+        // VBlank entry and  NMI trigger
         if self.scanlines == 241 && self.ppu_dots == 1 {
             self.ppustatus |= 0x80;
             if (self.ppuctrl & 0x80) != 0 {
@@ -183,7 +271,7 @@ impl PPU {
             }
         }
 
-        // Clear VBlank and status flags on pre-render line
+        // Clear VBlank, sprite-0 hit, and overflow flags on pre-render line
         if self.scanlines == 261 && self.ppu_dots == 1 {
             self.ppustatus &= !0xE0;
         }
@@ -191,11 +279,14 @@ impl PPU {
         // Clock timing progression
         self.ppu_dots += 1;
 
-        // Odd frame cycle skip handling
+        // Odd frame cycle skip handling. This path also wraps scanlines
+        // back to 0 (line 261 -> 0), so it must mark the frame complete
+        // here too, same as the normal wraparound below.
         if self.scanlines == 261 && rendering_enabled && self.is_odd_frame && self.ppu_dots == 339 {
             self.ppu_dots = 0;
             self.scanlines = 0;
             self.is_odd_frame = !self.is_odd_frame;
+            self.frame_complete = true;
             return;
         }
 
@@ -206,9 +297,11 @@ impl PPU {
             if self.scanlines > 261 {
                 self.scanlines = 0;
                 self.is_odd_frame = !self.is_odd_frame;
+                self.frame_complete = true;
             }
         }
     }
+
     pub fn increment_fine_y(&mut self) {
         if (self.v & 0x7000) != 0x7000 {
             self.v += 0x1000;
@@ -247,7 +340,7 @@ impl PPU {
         }
     }
 
-   pub fn process_fetches_and_scrolling(&mut self, cartridge: &Cartridge) {
+    pub fn process_fetches_and_scrolling(&mut self, cartridge: &Cartridge) {
         let is_visible_scanline = self.scanlines <= 239;
         let is_prerender_scanline = self.scanlines == 261;
 
@@ -270,13 +363,21 @@ impl PPU {
                     self.at_byte = self.ppu_read(cartridge, address);
                 }
                 5 => {
-                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 { 0x1000 } else { 0x0000 };
+                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 {
+                        0x1000
+                    } else {
+                        0x0000
+                    };
                     let fine_y = (self.v >> 12) & 0x07;
                     let address = bg_table_base + ((self.nt_byte as u16) << 4) + fine_y;
                     self.pattern_low = self.ppu_read(cartridge, address);
                 }
                 7 => {
-                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 { 0x1000 } else { 0x0000 };
+                    let bg_table_base = if (self.ppuctrl & 0x10) != 0 {
+                        0x1000
+                    } else {
+                        0x0000
+                    };
                     let fine_y = (self.v >> 12) & 0x07;
                     let address = bg_table_base + ((self.nt_byte as u16) << 4) + fine_y + 8;
                     self.pattern_high = self.ppu_read(cartridge, address);
@@ -302,6 +403,147 @@ impl PPU {
             self.copy_y();
         }
     }
+
+    /// Scans primary OAM for up to 8 sprites that intersect the line
+    /// following the current scanline, writing results into secondary OAM.
+    /// Sets the sprite overflow flag if more than 8 sprites are in range.
+    fn evaluate_sprites(&mut self) {
+        self.secondary_oam_ram = [0xFF; 32];
+        self.secondary_sprite0 = [false; 8];
+        self.secondary_sprite_count = 0;
+
+        let sprite_height: u16 = if (self.ppuctrl & 0x20) != 0 { 16 } else { 8 };
+
+        // Sprite eval on scanline S determines sprites rendered on S+1
+        // (the prerender line, 261, evaluates for visible line 0).
+        let target_line = if self.scanlines == 261 {
+            0
+        } else {
+            self.scanlines + 1
+        };
+        self.sprite_eval_target_line = target_line;
+
+        let mut overflow = false;
+
+        for n in 0..64usize {
+            let oam_base = n * 4;
+            let y_raw = self.oam_ram[oam_base] as u16;
+            // OAM Y is delayed by one scanline: the sprite's actual top row is y_raw + 1
+            let sprite_top = y_raw.wrapping_add(1);
+            let diff = target_line.wrapping_sub(sprite_top);
+
+            if diff < sprite_height {
+                if self.secondary_sprite_count < 8 {
+                    let idx = self.secondary_sprite_count * 4;
+                    self.secondary_oam_ram[idx] = self.oam_ram[oam_base];
+                    self.secondary_oam_ram[idx + 1] = self.oam_ram[oam_base + 1];
+                    self.secondary_oam_ram[idx + 2] = self.oam_ram[oam_base + 2];
+                    self.secondary_oam_ram[idx + 3] = self.oam_ram[oam_base + 3];
+                    if n == 0 {
+                        self.secondary_sprite0[self.secondary_sprite_count] = true;
+                    }
+                    self.secondary_sprite_count += 1;
+                } else {
+                    overflow = true;
+                    break;
+                }
+            }
+        }
+
+        if overflow {
+            self.ppustatus |= 0x20;
+        }
+    }
+
+    /// Converts the raw OAM bytes gathered by evaluate_sprites() into actual
+    /// pattern-table bitplane bytes for rendering, applying flip flags.
+    fn fetch_sprite_patterns(&mut self, cartridge: &Cartridge) {
+        let sprite_height: u16 = if (self.ppuctrl & 0x20) != 0 { 16 } else { 8 };
+        let target_line = self.sprite_eval_target_line;
+
+        self.active_sprite_count = self.secondary_sprite_count;
+
+        for i in 0..self.secondary_sprite_count {
+            let base = i * 4;
+            let y_raw = self.secondary_oam_ram[base] as u16;
+            let tile_index = self.secondary_oam_ram[base + 1];
+            let attribute = self.secondary_oam_ram[base + 2];
+            let sprite_x = self.secondary_oam_ram[base + 3];
+
+            let flip_v = (attribute & 0x80) != 0;
+            let flip_h = (attribute & 0x40) != 0;
+
+            let sprite_top = y_raw.wrapping_add(1);
+            let mut row = target_line.wrapping_sub(sprite_top);
+            if flip_v {
+                row = sprite_height - 1 - row;
+            }
+
+            let (pattern_table, tile) = if sprite_height == 16 {
+                // 8x16 sprites: bit 0 of tile index selects pattern table,
+                // and the top/bottom half are adjacent tiles.
+                let table = if (tile_index & 0x01) != 0 {
+                    0x1000
+                } else {
+                    0x0000
+                };
+                let mut tile_num = tile_index & 0xFE;
+                if row >= 8 {
+                    tile_num += 1;
+                }
+                (table, tile_num)
+            } else {
+                let table = if (self.ppuctrl & 0x08) != 0 {
+                    0x1000
+                } else {
+                    0x0000
+                };
+                (table, tile_index)
+            };
+
+            let fine_row = row % 8;
+            let addr_low = pattern_table + ((tile as u16) << 4) + fine_row;
+            let addr_high = addr_low + 8;
+
+            let mut pat_lo = self.ppu_read(cartridge, addr_low);
+            let mut pat_hi = self.ppu_read(cartridge, addr_high);
+
+            if flip_h {
+                pat_lo = pat_lo.reverse_bits();
+                pat_hi = pat_hi.reverse_bits();
+            }
+
+            self.active_sprites[i] = RenderSprite {
+                x: sprite_x,
+                pattern_low: pat_lo,
+                pattern_high: pat_hi,
+                attribute,
+                is_sprite_0: self.secondary_sprite0[i],
+            };
+        }
+    }
+
+    /// Drives sprite evaluation (dot 65) and pattern fetch (dot 257) each
+    /// scanline. Both stages are performed instantly rather than spread
+    /// across the exact hardware dot timing; the resulting frame is
+    /// equivalent for anything that doesn't rely on mid-scanline OAM
+    /// ($2004) reads during evaluation.
+    fn process_sprite_evaluation(&mut self, cartridge: &Cartridge) {
+        let is_visible_scanline = self.scanlines <= 239;
+        let is_prerender_scanline = self.scanlines == 261;
+        if !is_visible_scanline && !is_prerender_scanline {
+            return;
+        }
+
+        if self.ppu_dots == 65 {
+            self.evaluate_sprites();
+        }
+
+        if self.ppu_dots == 257 {
+            self.fetch_sprite_patterns(cartridge);
+        }
+    }
+
     pub fn ppu_read(&self, cartridge: &Cartridge, mut addr: u16) -> u8 {
         // PPU address bus is 14 bits wide
         addr &= 0x3FFF;
@@ -416,6 +658,7 @@ impl PPU {
         match reg {
             // 0x2000, set ppu controls
             0 => {
+                //println!("[DEBUG] PPUCTRL write: {:#04X}", data);
                 self.ppuctrl = data;
                 // Update base nametable selection bits in temporary address 't'
                 self.t = (self.t & !0x0C00) | (((data as u16) & 0x03) << 10);
@@ -423,6 +666,7 @@ impl PPU {
 
             // 0x2001, set ppu masks
             1 => {
+                //println!("[DEBUG] PPUMASK write: {:#04X}", data);
                 self.ppumask = data;
             }
 
@@ -481,5 +725,13 @@ impl PPU {
                 // 0x2002 is read only
             }
         }
+    }
+
+    /// Called by OAM DMA (0x4014) on the bus. Writes to the current OAM
+    /// address and auto-increments it, matching real hardware behavior
+    /// (a DMA is effectively 256 back-to-back $2004 writes).
+    pub fn oam_dma_write(&mut self, data: u8) {
+        self.oam_ram[self.oam_address as usize] = data;
+        self.oam_address = self.oam_address.wrapping_add(1);
     }
 }
