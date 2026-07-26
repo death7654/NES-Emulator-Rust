@@ -71,6 +71,13 @@ impl CPU {
     fn write_bus(&mut self, bus: &mut Bus, address: u16, data: u8) {
         self.tick(bus);
         bus.write(address, data);
+
+        if address == 0x4014 {
+            let dma_len = if self.cycles % 2 == 0 { 513 } else { 514 };
+            for _ in 0..dma_len {
+                self.tick(bus);
+            }
+        }
     }
 
     pub fn handle_interrupts(&mut self, bus: &mut Bus, selection: u8) {
@@ -161,14 +168,14 @@ impl CPU {
             (0b00, 0b100, 0b101) => self.st(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
             (0b00, 0b101, 0b101) => self.ld(AddressingModes::ZeroPageX, LoadRegisters::Y, bus),
 
-            (0b00, 0b000, 0b110) => self.clc(),
-            (0b00, 0b001, 0b110) => self.sec(),
-            (0b00, 0b010, 0b110) => self.cli(),
-            (0b00, 0b011, 0b110) => self.sei(),
+            (0b00, 0b000, 0b110) => self.clc(bus),
+            (0b00, 0b001, 0b110) => self.sec(bus),
+            (0b00, 0b010, 0b110) => self.cli(bus),
+            (0b00, 0b011, 0b110) => self.sei(bus),
             (0b00, 0b100, 0b110) => self.tya(bus),
-            (0b00, 0b101, 0b110) => self.clv(),
-            (0b00, 0b110, 0b110) => self.cld(),
-            (0b00, 0b111, 0b110) => self.sed(),
+            (0b00, 0b101, 0b110) => self.clv(bus),
+            (0b00, 0b110, 0b110) => self.cld(bus),
+            (0b00, 0b111, 0b110) => self.sed(bus),
 
             (0b00, 0b101, 0b111) => self.ld(AddressingModes::AbsoluteX, LoadRegisters::Y, bus),
 
@@ -277,7 +284,7 @@ impl CPU {
             (0b10, 0b100, 0b010) => self.txa(bus),
             (0b10, 0b101, 0b010) => self.tax(bus),
             (0b10, 0b110, 0b010) => self.dex(bus),
-            (0b10, 0b111, 0b010) => self.nop(),
+            (0b10, 0b111, 0b010) => self.nop(bus),
 
             (0b10, 0b000, 0b011) => self.asl(AddressingModes::Absolute, bus),
             (0b10, 0b001, 0b011) => self.rol(AddressingModes::Absolute, bus),
@@ -314,40 +321,49 @@ impl CPU {
         }
     }
     // clear carry flag
-    fn clc(&mut self) {
+    fn clc(&mut self, bus: &mut Bus) {
         self.registers.carry = false;
+        self.tick(bus);
     }
 
     // clear decimal flag
-    fn cld(&mut self) {
+    fn cld(&mut self, bus: &mut Bus) {
         self.registers.decimal = false;
+        self.tick(bus);
     }
 
     // clear interrupt disable flag
-    fn cli(&mut self) {
+    fn cli(&mut self, bus: &mut Bus) {
         self.registers.interrupt_disable = false;
+        self.tick(bus);
     }
 
     // clear zero flag
-    fn clv(&mut self) {
+    fn clv(&mut self, bus: &mut Bus) {
         self.registers.overflow = false;
+        self.tick(bus);
     }
 
     // set clear flag
-    fn sec(&mut self) {
+    fn sec(&mut self, bus: &mut Bus) {
         self.registers.carry = true;
+        self.tick(bus);
     }
     // set decimal flag to true
-    fn sed(&mut self) {
+    fn sed(&mut self, bus: &mut Bus) {
         self.registers.decimal = true;
+        self.tick(bus);
     }
     // set i flag to true
-    fn sei(&mut self) {
+    fn sei(&mut self, bus: &mut Bus) {
         self.registers.interrupt_disable = true;
+        self.tick(bus);
     }
 
     // do nothing
-    fn nop(&mut self) {}
+    fn nop(&mut self, bus: &mut Bus) {
+        self.tick(bus);
+    }
 
     // branch on when there is no carry
     fn bcc(&mut self, bus: &mut Bus) {
