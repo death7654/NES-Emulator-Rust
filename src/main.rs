@@ -9,7 +9,7 @@ fn main() {
     let mut emulator = emulator::Emulator::new();
     let mut event_pump = emulator.display.sdl.event_pump().unwrap();
 
-    let mut file = File::open("games/tetris.nes").expect("Failed to open ROM file");
+    let mut file = File::open("games/mario.nes").expect("Failed to open ROM file");
     let mut rom_buffer = Vec::new();
     file.read_to_end(&mut rom_buffer)
         .expect("Failed to read ROM data");
@@ -32,8 +32,21 @@ fn main() {
     while running {
         // poll events every iteration, regardless of frame timing
         for event in event_pump.poll_iter() {
-            if let Event::Quit { .. } = event {
-                running = false;
+            match event {
+                Event::Quit { .. } => {
+                    running = false;
+                }
+                Event::KeyDown {
+                    keycode: Some(key), ..
+                } => {
+                    emulator.bus.input.press(key);
+                }
+                Event::KeyUp {
+                    keycode: Some(key), ..
+                } => {
+                    emulator.bus.input.release(key);
+                }
+                _ => {}
             }
         }
 

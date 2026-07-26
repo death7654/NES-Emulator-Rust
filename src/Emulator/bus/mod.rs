@@ -1,16 +1,17 @@
 use crate::emulator::cartridge;
+use crate::emulator::input;
 use crate::emulator::memory;
 use crate::emulator::ppu;
 
 pub struct Bus {
     ram: memory::Memory,
     cartridge: cartridge::Cartridge,
+    pub input: input::Controller,
     // Blargg's tests use this region for state and text streams
     wram: [u8; 0x2000],
     pub ppu: ppu::PPU,
 
     pub nmi: bool,
-    pub dma_cycles: u32,
 }
 
 impl Bus {
@@ -21,10 +22,10 @@ impl Bus {
         Self {
             ram: memory,
             cartridge: cart,
+            input: input::Controller::new(),
             wram: [0; 0x2000],
             ppu: ppu::PPU::new(),
             nmi: false,
-            dma_cycles: 0,
         }
     }
 
@@ -53,6 +54,7 @@ impl Bus {
 
             // PPU Register range (0x2000 - 0x3FFF, mirrored every 8 bytes)
             0x2000..=0x3FFF => self.ppu.cpu_read(&self.cartridge, address),
+            0x4016 => self.input.get_input(),
 
             0x6000..=0x7FFF => self.wram[(address - 0x6000) as usize],
 
@@ -81,6 +83,7 @@ impl Bus {
             0x4014 => {
                 self.oam_dma(data);
             }
+            0x4016 => self.input.write_strobe(data),
 
             // Catch CPU writes to Blargg's test window
             0x6000..=0x7FFF => {
