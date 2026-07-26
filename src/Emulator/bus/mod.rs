@@ -10,6 +10,7 @@ pub struct Bus {
     pub ppu: ppu::PPU,
 
     pub nmi: bool,
+    pub dma_cycles: u32,
 }
 
 impl Bus {
@@ -23,14 +24,14 @@ impl Bus {
             wram: [0; 0x2000],
             ppu: ppu::PPU::new(),
             nmi: false,
+            dma_cycles: 0,
         }
     }
 
     pub fn step_ppu(&mut self, cycles: u32) {
         for _ in 0..(cycles * 3) {
             self.ppu.step(&self.cartridge);
-            if self.ppu.request_nmi
-            {
+            if self.ppu.request_nmi {
                 self.nmi = true;
                 self.ppu.request_nmi = false;
             }
@@ -75,6 +76,12 @@ impl Bus {
                 self.ppu.cpu_write(&mut self.cartridge, address, data);
             }
 
+            // OAM DMA: copies 256 bytes from $XX00-$XXFF (XX = data) into
+            // PPU OAM, starting at the current OAM address.
+            0x4014 => {
+                self.oam_dma(data);
+            }
+
             // Catch CPU writes to Blargg's test window
             0x6000..=0x7FFF => {
                 let offset = (address - 0x6000) as usize;
@@ -91,7 +98,16 @@ impl Bus {
         }
     }
 
+    /// Performs an OAM DMA transfer triggered by a write to 0x4014
+    fn oam_dma(&mut self, page: u8) {
+        let start = (page as u16) << 8;
+        for i in 0..256u16 {
+            let byte = self.read(start + i);
+            self.ppu.oam_dma_write(byte);
+        }
+    }
+
     pub fn load_rom(&mut self, rom_data: &[u8]) {
-        self.cartridge.prg_rom = rom_data.to_vec();
+        self.cartridge.from_ines(rom_data);
     }
 }
