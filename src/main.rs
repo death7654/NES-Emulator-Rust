@@ -2,19 +2,20 @@ use std::fs::File;
 use std::io::Read;
 mod emulator;
 
+use crate::emulator::display::Display;
+use sdl2::event::Event;
+
 fn main() {
     let mut emulator = emulator::Emulator::new();
+    let mut event_pump = emulator.display.sdl.event_pump().unwrap();
 
-    let mut file =
-        File::open("test_roms/instr_test-v3/official_only.nes").expect("Failed to open ROM file");
+    let mut file = File::open("games/tetris.nes").expect("Failed to open ROM file");
     let mut rom_buffer = Vec::new();
     file.read_to_end(&mut rom_buffer)
         .expect("Failed to read ROM data");
 
-    // Skip the 16-byte iNES header and pass only the actual ROM data
-    // will need to implement this later to read the cartridge header
     if rom_buffer.len() > 16 {
-        emulator.bus.load_rom(&rom_buffer[16..]);
+        emulator.bus.load_rom(&rom_buffer);
     } else {
         panic!("ROM file is too small to contain a valid iNES header!");
     }
@@ -23,7 +24,19 @@ fn main() {
 
     println!("Starting Emulator");
     let mut running = true;
+
+    let mut canvas = emulator.display.canvas;
+    let texture_creator = emulator.display.texture_creator;
+    let mut frame_texture = Display::create_frame_texture(&texture_creator);
+
     while running {
+        // poll events every iteration, regardless of frame timing
+        for event in event_pump.poll_iter() {
+            if let Event::Quit { .. } = event {
+                running = false;
+            }
+        }
+
         if emulator.bus.poll_nmi() {
             emulator.cpu.handle_interrupts(&mut emulator.bus, 0);
             continue;
@@ -35,23 +48,21 @@ fn main() {
         }
 
         let opcode = emulator.cpu.fetch(&mut emulator.bus);
-
-        let status = emulator.bus.read(0x6000);
-        if status != 0x80 && status != 0x81 {
-            let mut msg = String::new();
-            let mut addr = 0x6004;
-            loop {
-                let b = emulator.bus.read(addr);
-                if b == 0 {
-                    break;
-                }
-                msg.push(b as char);
-                addr += 1;
-            }
-            println!("Test finished with status: {:#04X}\n{}", status, msg);
-            break;
-        }
-
         emulator.cpu.execute(opcode, &mut emulator.bus);
+
+        if emulator.bus.ppu.frame_complete {
+            emulator.bus.ppu.frame_complete = false;
+
+            let mut distinct = std::collections::HashSet::new();
+            for &px in emulator.bus.ppu.frame_buffer.iter() {
+                distinct.insert(px);
+            }
+
+            Display::render_frame(
+                &mut canvas,
+                &mut frame_texture,
+                &emulator.bus.ppu.frame_buffer,
+            );
+        }
     }
 }
