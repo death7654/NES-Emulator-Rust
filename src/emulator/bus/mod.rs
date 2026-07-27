@@ -74,7 +74,7 @@ impl Bus {
                 self.ppu.cpu_write(&mut self.cartridge, address, data);
             }
 
-            // OAM DMA: copies 256 bytes from $XX00-$XXFF (XX = data) into
+            // OAM DMA: copies 256 bytes from 0xXX00-0xXXFF (XX = data) into
             // PPU OAM, starting at the current OAM address.
             0x4014 => {
                 self.oam_dma(data);
@@ -93,6 +93,9 @@ impl Bus {
                     let _ = io::stdout().flush();
                 }
             }
+            0x8000..=0xFFFF => {
+            self.cartridge.mapper.as_mut().unwrap().cpu_write(address, data);
+        }
             _ => {}
         }
     }

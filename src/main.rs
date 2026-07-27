@@ -9,7 +9,7 @@ fn main() {
     let mut emulator = emulator::Emulator::new();
     let mut event_pump = emulator.display.sdl.event_pump().unwrap();
 
-    let mut file = File::open("games/mario.nes").expect("Failed to open ROM file");
+    let mut file = File::open("games/zelda.nes").expect("Failed to open ROM file");
     let mut rom_buffer = Vec::new();
     file.read_to_end(&mut rom_buffer)
         .expect("Failed to read ROM data");

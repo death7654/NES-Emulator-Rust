@@ -527,7 +527,7 @@ impl PPU {
     /// scanline. Both stages are performed instantly rather than spread
     /// across the exact hardware dot timing; the resulting frame is
     /// equivalent for anything that doesn't rely on mid-scanline OAM
-    /// ($2004) reads during evaluation.
+    /// (0x2004) reads during evaluation.
     fn process_sprite_evaluation(&mut self, cartridge: &mut Cartridge) {
         let is_visible_scanline = self.scanlines <= 239;
         let is_prerender_scanline = self.scanlines == 261;
@@ -729,7 +729,7 @@ impl PPU {
 
     /// Called by OAM DMA (0x4014) on the bus. Writes to the current OAM
     /// address and auto-increments it, matching real hardware behavior
-    /// (a DMA is effectively 256 back-to-back $2004 writes).
+    /// (a DMA is effectively 256 back-to-back 0x2004 writes).
     pub fn oam_dma_write(&mut self, data: u8) {
         self.oam_ram[self.oam_address as usize] = data;
         self.oam_address = self.oam_address.wrapping_add(1);
