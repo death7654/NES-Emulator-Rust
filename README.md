@@ -65,7 +65,7 @@ opt-level = 2
 
 Place a .nes ROM at games/mario.nes relative to the project root (make a games/ folder next to Cargo.toml if it doesn't exist). This path is currently hardcoded in main.rs, change it there to point at a different ROM.
 
-Only iNES-format ROMs are supported, and only Mapper 0 (NROM) and Mapper 1 (MMC1) are implemented. ROMs using other mappers will fail to load.
+Only iNES-format ROMs are supported, and only Mapper 0 (NROM), Mapper 1 (MMC1), and Mapper 3 are implemented. ROMs using other mappers will fail to load.
 
 ## Controls
 
