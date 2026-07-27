@@ -1,3 +1,5 @@
+use sdl2::keyboard::Scancode::P;
+
 #[derive(Clone, Copy)]
 pub enum Mirroring {
     Horizontal,
@@ -258,6 +260,70 @@ impl Mapper for Mapper1 {
     }
 }
 
+pub struct Mapper3
+{
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    chr_bank: u8,
+}
+
+impl Mapper3
+{
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>) -> Self {
+        Self {
+            prg_rom,
+            chr_rom,
+            chr_bank: 0
+        }
+    }
+}
+
+impl Mapper for Mapper3
+{
+    fn cpu_read(&self, address: u16) -> u8 {
+        match address
+        {
+            0x8000..=0xFFFF =>
+            {
+                let relative_address = address - 0x8000;
+                self.prg_rom[relative_address as usize]
+            }
+            _ => 0
+        }
+        
+    }
+    fn cpu_write(&mut self, address: u16, data: u8) {
+        match address
+        {
+            0x8000..=0xFFFF =>
+            {
+                let selected_bank = data & 0x03;
+                self.chr_bank = selected_bank;
+            }
+            _ => {}
+        }
+        
+    }
+    fn ppu_read(&self, address: u16) -> u8 {
+        match address
+        {
+            0x0000..=0x1FFF =>
+            {
+                if self.chr_rom.is_empty() {
+                return 0;
+            }
+                let mapped_addr = (self.chr_bank as usize * 0x2000) + (address as usize);
+                self.chr_rom[mapped_addr % self.chr_rom.len()]
+            }
+            _ => 0
+        }
+    }
+    fn ppu_write(&mut self, address: u16, data: u8) {
+        // CHR_ROM does not support writes
+    }
+}
+
+
 pub struct Cartridge {
     pub mapper: Option<Box<dyn Mapper>>,
     pub mirroring: Mirroring,
@@ -328,6 +394,7 @@ impl Cartridge {
         let mapper: Box<dyn Mapper> = match mapper_id {
             0 => Box::new(Mapper0::new(prg_rom, chr_rom, chr_is_ram)),
             1 => Box::new(Mapper1::new(prg_rom, chr_rom, chr_is_ram)),
+            3 => Box::new(Mapper3::new(prg_rom, chr_rom)),
             _ => return Err(format!("Unsupported Mapper ID: {}", mapper_id)),
         };
 
