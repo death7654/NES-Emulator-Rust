@@ -2,6 +2,13 @@
 
 A NES emulator written from scratch in Rust, using SDL2 for windowing and video output.
 
+# Project Screenshots
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/c221017d-a800-4a15-ba88-5ba1d49c951d" />
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/f2d750a8-b253-4ec2-a6c5-bd207e4e0b08" />
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/3d746864-f370-4205-8232-cc03d2186f26" />
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/836e818d-499e-4787-81c7-0718b7c4fcee" />
+
+
 ## Features
 
 - CPU: full set of official 6502 opcodes, decoded using the cc/bbb/aaa bit-field pattern instead of a flat 256-entry table. Cycle-accurate ticking, including page-crossing penalties, branch timing, and OAM DMA CPU stalls (513/514 cycles).
